@@ -3,6 +3,7 @@
 (function (root) {
   const STORAGE_KEY = 'seodaemun_student_state_v1';
   const DEMO_SUBMISSIONS_KEY = 'seodaemun_demo_submissions';
+  const SESSION_ETIQUETTE_KEY = 'seodaemun_etiquette_ack_v1';
   const CIRCLED_NUMS = ['①', '②', '③', '④'];
 
   function normalizeShortAnswer(value) {
@@ -230,6 +231,9 @@
     lightboxImg: document.getElementById('lightboxImg'),
     lightboxCaption: document.getElementById('lightboxCaption'),
     lightboxClose: document.getElementById('lightboxClose'),
+    etiquetteModal: document.getElementById('etiquetteModal'),
+    etiquetteConfirmBtn: document.getElementById('etiquetteConfirmBtn'),
+    openEtiquetteBtn: document.getElementById('openEtiquetteBtn'),
     toast: document.getElementById('toast')
   };
 
@@ -982,12 +986,46 @@
     showToast('입력 내용을 초기화했습니다.');
   }
 
+  function openEtiquetteModal() {
+    if (!els.etiquetteModal) return;
+    els.etiquetteModal.hidden = false;
+    document.body.style.overflow = 'hidden';
+    if (els.etiquetteConfirmBtn) {
+      els.etiquetteConfirmBtn.focus({ preventScroll: true });
+    }
+  }
+
+  function closeEtiquetteModal() {
+    if (!els.etiquetteModal) return;
+    els.etiquetteModal.hidden = true;
+    document.body.style.overflow = '';
+    try {
+      root.sessionStorage.setItem(SESSION_ETIQUETTE_KEY, '1');
+    } catch (e) {}
+  }
+
   function init() {
     if (teacherMode && els.teacherModeBar) {
       els.teacherModeBar.hidden = false;
     }
     if (!CONFIG.apiUrl && !teacherMode && els.previewModeBanner) {
       els.previewModeBanner.hidden = false;
+    }
+
+    if (els.etiquetteConfirmBtn) {
+      els.etiquetteConfirmBtn.addEventListener('click', closeEtiquetteModal);
+    }
+    if (els.openEtiquetteBtn) {
+      els.openEtiquetteBtn.addEventListener('click', openEtiquetteModal);
+    }
+    if (!teacherMode) {
+      let acked = false;
+      try {
+        acked = Boolean(root.sessionStorage.getItem(SESSION_ETIQUETTE_KEY));
+      } catch (e) {}
+      if (!acked) {
+        openEtiquetteModal();
+      }
     }
 
     if (els.qrSiteUrlText && CONFIG.siteUrl) {

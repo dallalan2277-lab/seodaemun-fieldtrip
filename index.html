@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20261123-7" />
+  <link rel="stylesheet" href="styles.css?v=20261123-8" />
 </head>
 <body>
   <div id="teacherModeBar" class="teacher-mode-bar" hidden>
@@ -120,9 +120,33 @@
   </main>
 
   <footer class="app-footer">
+    <button type="button" id="openEtiquetteBtn" class="footer-link-btn">관람 예절 안내</button>
     <a href="teacher.html">1~7반 교사 대시보드</a>
     <a href="qr.html">QR 인쇄</a>
   </footer>
+
+  <!-- 관람 태도 & 문화상품권 선정 기준 안내 팝업 -->
+  <div id="etiquetteModal" class="etiquette-modal" hidden role="dialog" aria-modal="true" aria-labelledby="etiquetteModalTitle">
+    <div class="etiquette-dialog">
+      <div class="etiquette-badge">관람 예절 · 문화상품권 선정 안내</div>
+      <h2 id="etiquetteModalTitle" class="etiquette-title">서대문형무소역사관,<br />엄숙한 마음으로 함께 걸어요</h2>
+      <p class="etiquette-desc">
+        서대문형무소역사관은 수많은 독립운동가분들이 조국의 독립을 위해 희생하신 추모와 기억의 공간입니다.
+      </p>
+      <p class="etiquette-desc">
+        오늘 반별 문화상품권 대상자(10명)는 <strong>퀴즈 정답률과 소감문뿐만 아니라, 오늘 체험학습 전반의 관람 태도</strong>를 함께 판단하여 선정합니다.
+      </p>
+      <div class="etiquette-rule-box">
+        <div class="etiquette-rule-heading">선정 제외 기준</div>
+        <ul class="etiquette-rule-list">
+          <li>집합·이동 시간에 <strong>지각</strong>하여 일정을 방해하는 경우</li>
+          <li>전시관·옥사 등 추모 공간에서 <strong>무례하게 떠들거나 장난치는 등 관람 예절을 지키지 않는 경우</strong></li>
+        </ul>
+        <p class="etiquette-rule-note">위 경우에는 퀴즈 점수가 높더라도 문화상품권 선정 대상에서 제외됩니다.</p>
+      </div>
+      <button type="button" id="etiquetteConfirmBtn" class="btn-primary">네, 관람 예절을 지키며 참여하겠습니다</button>
+    </div>
+  </div>
 
   <!-- 사진 확대 라이트박스 -->
   <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="사진 확대 보기">
@@ -135,8 +159,8 @@
 
   <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=20261123-7"></script>
-  <script src="data.js?v=20261123-7"></script>
-  <script src="app.js?v=20261123-7"></script>
+  <script src="config.js?v=20261123-8"></script>
+  <script src="data.js?v=20261123-8"></script>
+  <script src="app.js?v=20261123-8"></script>
 </body>
 </html>

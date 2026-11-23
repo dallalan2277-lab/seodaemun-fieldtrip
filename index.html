@@ -10,35 +10,35 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20261123-3" />
+  <link rel="stylesheet" href="styles.css?v=20261123-4" />
 </head>
 <body>
   <div id="teacherModeBar" class="teacher-mode-bar" hidden>
-    <span>교사 미리보기 모드 (?교사) — 학번 입력 없이 채점·정답·해설을 바로 확인할 수 있습니다. (서버 저장 안 됨)</span>
-    <a href="./">학생 화면으로 돌아가기</a>
+    <span>교사 미리보기 모드 (?교사) — 정답·해설 확인용 (서버 저장 안 됨)</span>
+    <a href="./">학생 화면</a>
   </div>
 
-  <!-- PDF 2·3쪽 상단 바 모티프: 얇은 고정 진행 바 -->
+  <!-- 1줄 슬림 고정 진행 바 -->
   <header class="app-header">
     <div class="header-inner">
-      <div class="running-title">서대문형무소, 그날의 기억을 걷다</div>
+      <div class="running-title">서대문형무소역사관</div>
       <div class="running-status">
         <div class="progress-track" aria-hidden="true">
           <div class="progress-fill" id="progressFill"></div>
         </div>
-        <div class="progress-text" id="progressText">퀴즈 0 / 20</div>
-        <div class="save-badge" id="saveBadge" aria-live="polite">자동 저장됨</div>
+        <div class="progress-text" id="progressText">0 / 20</div>
+        <div class="save-badge" id="saveBadge" aria-live="polite">저장됨</div>
       </div>
     </div>
   </header>
 
-  <!-- PDF 1쪽 모티프: 풀-블리드 짙은 벽돌 히어로 배너 + 국가사적 324호 스탬프 -->
+  <!-- 히어로 배너 -->
   <section class="hero-banner" aria-label="활동지 표지">
     <div class="hero-inner">
       <div class="hero-copy">
-        <div class="hero-kicker" id="headerKicker">현장체험학습 모바일 활동지 · 중학교 1학년</div>
+        <div class="hero-kicker" id="headerKicker">중학교 1학년 현장체험학습</div>
         <h1 class="hero-title" id="headerTitle">서대문형무소,<br />그날의 기억을 걷다</h1>
-        <p class="hero-subtitle">현장을 걸으며 자료를 읽고 퀴즈와 소감을 차근차근 작성해 보세요.</p>
+        <p class="hero-subtitle">관람하며 읽고, 퀴즈 20문항과 소감을 남겨요.</p>
       </div>
       <div class="heritage-stamp" aria-label="국가사적 324호">
         <span class="stamp-top">국가사적</span>
@@ -49,25 +49,40 @@
   </section>
 
   <main class="container">
+    <!-- 접히는 QR 공유 패널 -->
+    <section class="qr-drawer" aria-label="현장 공유용 QR 코드">
+      <button type="button" id="qrToggleBtn" class="qr-toggle-btn" aria-expanded="false" aria-controls="qrDrawerBody">
+        <span class="qr-toggle-label">현장 공유용 QR 코드</span>
+        <span class="qr-toggle-arrow" id="qrToggleArrow">펼치기 ▾</span>
+      </button>
+      <div id="qrDrawerBody" class="qr-drawer-body" hidden>
+        <div class="qr-thumb-box">
+          <img src="assets/site-qr.png" alt="학생용 사이트 QR 코드" />
+        </div>
+        <div class="qr-url-text" id="qrSiteUrlText">https://dallalan2277-lab.github.io/seodaemun-fieldtrip/</div>
+        <div class="qr-drawer-actions">
+          <button type="button" id="copySiteUrlBtn" class="btn-secondary">주소 복사</button>
+          <a href="qr.html" class="btn-secondary" style="text-decoration:none;display:inline-flex;align-items:center;">인쇄용 QR</a>
+        </div>
+      </div>
+    </section>
+
     <div id="previewModeBanner" class="notice-banner warn" hidden>
-      <strong>서버 연결 전 미리보기 모드:</strong> 현재 구글 시트 연동 주소(<code>config.js</code>)가 비어 있어 답안이 이 기기에만 임시 저장됩니다. 사이트 테스트는 그대로 가능하며, <a href="teacher.html">교사용 대시보드 미리보기</a>에서도 방금 제출한 결과를 확인할 수 있습니다.
+      구글 시트 연결 전 임시 저장 모드입니다. (<a href="teacher.html">교사 대시보드</a>)
     </div>
 
-    <!-- 학생 정보 입력 (PDF 1쪽 이름/학년·반 서식 감성) -->
+    <!-- 학생 정보 입력 -->
     <section class="card student-card" aria-labelledby="studentInfoHeading">
       <div class="section-head">
         <div class="section-head-left">
           <span class="sec-num-box" aria-hidden="true">✓</span>
-          <h2 class="section-title" id="studentInfoHeading">학생 정보 확인 (1학년)</h2>
+          <h2 class="section-title" id="studentInfoHeading">학생 정보 (1학년)</h2>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <button type="button" id="resetStudentBtn" class="btn-reset-info">입력 초기화</button>
-          <span class="sec-tag">필수 입력</span>
-        </div>
+        <button type="button" id="resetStudentBtn" class="btn-reset-info">입력 초기화</button>
       </div>
       <div class="student-grid">
         <div>
-          <span class="field-label">반 선택 (1~7반)</span>
+          <span class="field-label">반 선택</span>
           <div class="class-pills" id="classPills" role="group" aria-label="반 선택"></div>
         </div>
         <div class="student-row-two">
@@ -90,7 +105,7 @@
               class="input-box input-underline"
               type="text"
               maxlength="20"
-              placeholder="이름을 입력하세요"
+              placeholder="이름 입력"
             />
           </div>
         </div>
@@ -105,10 +120,8 @@
   </main>
 
   <footer class="app-footer">
-    <span>서대문형무소역사관 현장체험학습</span>
-    <span aria-hidden="true">·</span>
-    <a href="teacher.html">1~7반 선생님 대시보드</a>
-    <a href="qr.html">현장 QR 인쇄 페이지</a>
+    <a href="teacher.html">1~7반 교사 대시보드</a>
+    <a href="qr.html">QR 인쇄</a>
     <a href="?교사">교사 미리보기</a>
   </footer>
 
@@ -123,8 +136,8 @@
 
   <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=20261123-3"></script>
-  <script src="data.js?v=20261123-3"></script>
-  <script src="app.js?v=20261123-3"></script>
+  <script src="config.js?v=20261123-4"></script>
+  <script src="data.js?v=20261123-4"></script>
+  <script src="app.js?v=20261123-4"></script>
 </body>
 </html>

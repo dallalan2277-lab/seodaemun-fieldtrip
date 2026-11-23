@@ -212,6 +212,11 @@
   const els = {
     teacherModeBar: document.getElementById('teacherModeBar'),
     previewModeBanner: document.getElementById('previewModeBanner'),
+    qrToggleBtn: document.getElementById('qrToggleBtn'),
+    qrToggleArrow: document.getElementById('qrToggleArrow'),
+    qrDrawerBody: document.getElementById('qrDrawerBody'),
+    qrSiteUrlText: document.getElementById('qrSiteUrlText'),
+    copySiteUrlBtn: document.getElementById('copySiteUrlBtn'),
     saveBadge: document.getElementById('saveBadge'),
     progressFill: document.getElementById('progressFill'),
     progressText: document.getElementById('progressText'),
@@ -248,7 +253,7 @@
     }
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      els.saveBadge.textContent = '자동 저장됨';
+      els.saveBadge.textContent = '저장됨';
       els.saveBadge.classList.remove('saving');
     }, 250);
     updateProgress();
@@ -266,7 +271,7 @@
     });
     const pct = Math.round((answered / wsData.questions.length) * 100);
     els.progressFill.style.width = pct + '%';
-    els.progressText.textContent = '퀴즈 ' + answered + ' / ' + wsData.questions.length;
+    els.progressText.textContent = answered + ' / ' + wsData.questions.length;
   }
 
   function escapeHtml(str) {
@@ -308,25 +313,22 @@
     els.lightboxImg.src = '';
   }
 
-  function renderSectionHead(numLabel, title, tagText) {
+  function renderSectionHead(numLabel, title) {
     return (
-      '<div class="section-head">' +
-        '<div class="section-head-left">' +
-          '<span class="sec-num-box" aria-hidden="true">' + escapeHtml(numLabel) + '</span>' +
-          '<h2 class="section-title">' + escapeHtml(title) + '</h2>' +
-        '</div>' +
-        (tagText ? '<span class="sec-tag">' + escapeHtml(tagText) + '</span>' : '') +
+      '<div class="section-head-left">' +
+        '<span class="sec-num-box" aria-hidden="true">' + escapeHtml(numLabel) + '</span>' +
+        '<h2 class="section-title">' + escapeHtml(title) + '</h2>' +
       '</div>'
     );
   }
 
   function renderWorksheet() {
     const wsId = state.activeTab;
-    const ws = DATA.worksheets[wsId];
+    const ws = DATA.worksheet || DATA.worksheets[wsId];
     const wsState = state.worksheets[wsId];
     const htmlParts = [];
 
-    // Recommended Route (leaflet)
+    // 0. Collapsible Recommended Route (기본 접힘)
     if (ws.routeSteps && ws.routeSteps.length) {
       const routeChips = ws.routeSteps
         .map(function (step, idx) {
@@ -340,17 +342,17 @@
         })
         .join('');
       htmlParts.push(
-        '<section class="card">' +
-          '<div class="route-box">' +
-            renderSectionHead('길', ws.routeTitle.replace(/^\[현장 리플릿 안내\]\s*/, ''), '추천 동선') +
-            '<p class="route-hint">현장을 걸으며 둘러본 곳을 터치해 관람 순서를 체크해 보세요.</p>' +
+        '<details class="card accordion-card">' +
+          '<summary class="accordion-summary">' + renderSectionHead('길', ws.routeTitle) + '</summary>' +
+          '<div class="accordion-body">' +
+            '<p class="route-hint">걸으며 둘러본 코스를 눌러 체크해 보세요.</p>' +
             '<div class="route-steps">' + routeChips + '</div>' +
           '</div>' +
-        '</section>'
+        '</details>'
       );
     }
 
-    // Intro + Photos + Activity 1 / Think
+    // 1. Intro + Photos + Activity 1
     const introBody = ws.introParagraphs
       .map(function (p) { return '<p class="lead-text">' + escapeHtml(p) + '</p>'; })
       .join('');
@@ -365,9 +367,9 @@
               '<figure class="photo-card">' +
                 '<button type="button" class="photo-trigger" data-zoom-src="' + escapeHtml(ph.src) + '" data-zoom-title="' + escapeHtml(ph.title) + '" data-zoom-caption="' + escapeHtml(ph.caption) + '">' +
                   '<img src="' + escapeHtml(ph.src) + '" alt="' + escapeHtml(ph.title) + '" loading="lazy" />' +
-                  '<span class="photo-zoom-hint">터치해 확대</span>' +
+                  '<span class="photo-zoom-hint">확대</span>' +
                 '</button>' +
-                '<figcaption class="photo-caption"><strong>▲ ' + escapeHtml(ph.title) + ':</strong> ' + escapeHtml(ph.caption) + '</figcaption>' +
+                '<figcaption class="photo-caption"><strong>' + escapeHtml(ph.title) + '</strong><br />' + escapeHtml(ph.caption) + '</figcaption>' +
               '</figure>'
             );
           })
@@ -376,46 +378,38 @@
     }
 
     htmlParts.push(
-      '<section class="card">' +
-        renderSectionHead('1', ws.introTitle.replace(/^\d+\.\s*/, ''), '역사 이해') +
-        introBody +
-        photosHtml +
-        '<div class="activity-box">' +
-          '<h3 class="activity-box-title">' + escapeHtml(ws.activityPromptTitle) + '</h3>' +
-          '<p class="activity-box-desc">' + escapeHtml(ws.activityPromptText) + '</p>' +
-          '<textarea id="activityThinkInput" class="textarea-box" placeholder="' + escapeHtml(ws.activityPlaceholder) + '">' +
-            escapeHtml(wsState.activityThink) +
-          '</textarea>' +
+      '<details class="card accordion-card" open>' +
+        '<summary class="accordion-summary">' + renderSectionHead('1', ws.introTitle.replace(/^\d+\.\s*/, '')) + '</summary>' +
+        '<div class="accordion-body">' +
+          introBody +
+          photosHtml +
+          '<div class="activity-box">' +
+            '<h3 class="activity-box-title">' + escapeHtml(ws.activityPromptTitle) + '</h3>' +
+            '<p class="activity-box-desc">' + escapeHtml(ws.activityPromptText) + '</p>' +
+            '<textarea id="activityThinkInput" class="textarea-box" placeholder="' + escapeHtml(ws.activityPlaceholder) + '">' +
+              escapeHtml(wsState.activityThink) +
+            '</textarea>' +
+          '</div>' +
         '</div>' +
-      '</section>'
+      '</details>'
     );
 
-    // Timeline (leaflet — PDF 1쪽 연결선 타임라인 스타일)
-    if (ws.timeline && ws.timeline.length) {
-      const timelineItems = ws.timeline
-        .map(function (item, idx) {
-          const isEndpoint = idx === 0 || idx === ws.timeline.length - 1;
-          return (
-            '<div class="timeline-node' + (isEndpoint ? ' endpoint' : '') + '">' +
-              '<span class="timeline-dot" aria-hidden="true"></span>' +
-              '<div class="timeline-card">' +
-                '<div class="timeline-year">' + escapeHtml(item.year) + '</div>' +
-                '<div class="timeline-event">' + escapeHtml(item.event) + '</div>' +
-              '</div>' +
-            '</div>'
-          );
-        })
-        .join('');
-      htmlParts.push(
-        '<section class="card">' +
-          renderSectionHead('2', ws.timelineTitle.replace(/^\d+\.\s*/, ''), '주요 연표') +
-          '<div class="timeline-track">' + timelineItems + '</div>' +
-        '</section>'
-      );
-    }
+    // 2. Timeline & Key Spaces
+    const timelineItems = (ws.timeline || [])
+      .map(function (item, idx) {
+        const isEndpoint = idx === 0 || idx === ws.timeline.length - 1;
+        return (
+          '<div class="timeline-node' + (isEndpoint ? ' endpoint' : '') + '">' +
+            '<span class="timeline-dot" aria-hidden="true"></span>' +
+            '<div class="timeline-card">' +
+              '<div class="timeline-year">' + escapeHtml(item.year) + '</div>' +
+              '<div class="timeline-event">' + escapeHtml(item.event) + '</div>' +
+            '</div>' +
+          '</div>'
+        );
+      })
+      .join('');
 
-    // Spaces
-    const spacesSecNum = ws.id === 'leaflet' ? '3' : '2';
     const spaceItems = ws.spaces
       .map(function (sp) {
         const visited = wsState.visitedSpaces.indexOf(sp.name) !== -1;
@@ -425,22 +419,29 @@
               '<div class="space-name">' + escapeHtml(sp.name) + '</div>' +
               '<div class="space-meaning">' + escapeHtml(sp.meaning) + '</div>' +
             '</div>' +
-            '<span class="visit-pill">' + (visited ? '✓ 확인함' : '현장 확인') + '</span>' +
+            '<span class="visit-pill">' + (visited ? '✓ 확인함' : '확인') + '</span>' +
           '</div>'
         );
       })
       .join('');
 
     htmlParts.push(
-      '<section class="card">' +
-        renderSectionHead(spacesSecNum, ws.spacesTitle.replace(/^\d+\.\s*/, ''), '공간 탐구') +
-        '<p class="lead-text">' + escapeHtml(ws.spacesLead) + '</p>' +
-        '<div class="space-list">' + spaceItems + '</div>' +
-      '</section>'
+      '<details class="card accordion-card" open>' +
+        '<summary class="accordion-summary">' + renderSectionHead('2', ws.spacesTitle.replace(/^\d+\.\s*/, '')) + '</summary>' +
+        '<div class="accordion-body">' +
+          '<div>' +
+            '<h3 class="sub-heading">' + escapeHtml(ws.timelineTitle) + '</h3>' +
+            '<div class="timeline-track">' + timelineItems + '</div>' +
+          '</div>' +
+          '<div>' +
+            '<h3 class="sub-heading">핵심 공간 (' + escapeHtml(ws.spacesLead) + ')</h3>' +
+            '<div class="space-list">' + spaceItems + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</details>'
     );
 
-    // Figures & Reflection Record
-    const figuresSecNum = ws.id === 'leaflet' ? '4' : '3';
+    // 3. Figures & Reflection Record
     const figureItems = ws.figures
       .map(function (fig) {
         return (
@@ -467,42 +468,41 @@
       .join('');
 
     htmlParts.push(
-      '<section class="card">' +
-        renderSectionHead(figuresSecNum, ws.figuresTitle.replace(/^\d+\.\s*/, ''), '독립운동가') +
-        '<div class="figure-list">' + figureItems + '</div>' +
-        '<div class="activity-box">' +
-          '<h3 class="activity-box-title">' + escapeHtml(ws.reflectionTitle) + '</h3>' +
-          '<p class="activity-box-desc">' + escapeHtml(ws.reflectionGuide) + '</p>' +
-          '<label class="field-label" for="selectedPickInput">' + escapeHtml(ws.reflectionPickLabel) + '</label>' +
-          '<div class="quick-picks">' + pickChips + '</div>' +
-          '<input id="selectedPickInput" class="input-box" type="text" placeholder="위에서 누르거나 직접 입력하세요" value="' + escapeHtml(wsState.selectedPick) + '" style="margin-bottom:10px;" />' +
-          '<label class="field-label" for="reflectionReasonInput">' + escapeHtml(ws.reflectionReasonLabel) + '</label>' +
-          '<textarea id="reflectionReasonInput" class="textarea-box" placeholder="' + escapeHtml(ws.reflectionReasonPlaceholder) + '">' +
-            escapeHtml(wsState.reflectionReason) +
-          '</textarea>' +
+      '<details class="card accordion-card" open>' +
+        '<summary class="accordion-summary">' + renderSectionHead('3', ws.figuresTitle.replace(/^\d+\.\s*/, '')) + '</summary>' +
+        '<div class="accordion-body">' +
+          '<div class="figure-list">' + figureItems + '</div>' +
+          '<div class="activity-box">' +
+            '<h3 class="activity-box-title">' + escapeHtml(ws.reflectionTitle) + '</h3>' +
+            '<p class="activity-box-desc">' + escapeHtml(ws.reflectionGuide) + '</p>' +
+            '<label class="field-label" for="selectedPickInput">' + escapeHtml(ws.reflectionPickLabel) + '</label>' +
+            '<div class="quick-picks">' + pickChips + '</div>' +
+            '<input id="selectedPickInput" class="input-box" type="text" placeholder="눌러서 선택하거나 직접 입력" value="' + escapeHtml(wsState.selectedPick) + '" style="margin-bottom:12px;" />' +
+            '<label class="field-label" for="reflectionReasonInput">' + escapeHtml(ws.reflectionReasonLabel) + '</label>' +
+            '<textarea id="reflectionReasonInput" class="textarea-box" placeholder="' + escapeHtml(ws.reflectionReasonPlaceholder) + '">' +
+              escapeHtml(wsState.reflectionReason) +
+            '</textarea>' +
+          '</div>' +
         '</div>' +
-      '</section>'
+      '</details>'
     );
 
     // Quiz Header Banner
     htmlParts.push(
       '<section class="quiz-banner">' +
-        '<div>' +
-          '<div class="quiz-banner-sub">' + escapeHtml(ws.quizSubtitle) + '</div>' +
-          '<h2 class="quiz-banner-title">' + escapeHtml(ws.quizTitle) + '</h2>' +
-        '</div>' +
-        '<span class="sec-tag" style="background:rgba(250,247,241,0.16);color:#fff;border-color:rgba(250,247,241,0.5);">총 20문항</span>' +
+        '<div class="quiz-banner-sub">' + escapeHtml(ws.quizSubtitle) + '</div>' +
+        '<h2 class="quiz-banner-title">' + escapeHtml(ws.quizTitle) + '</h2>' +
       '</section>'
     );
 
     // Part 1
-    htmlParts.push('<div class="part-header"><span>[1부] OX 퀴즈 (1번 ~ 10번) — 맞으면 O, 틀리면 X를 누르세요.</span><span class="sec-tag">퀴즈 1~10번</span></div>');
+    htmlParts.push('<div class="part-header">[1부] OX 퀴즈 (1~10번)</div>');
     ws.questions.filter(function (q) { return q.part === 1; }).forEach(function (q) {
       htmlParts.push(renderQuestionCard(q, wsState.answers[String(q.num)]));
     });
 
     // Part 2
-    htmlParts.push('<div class="part-header"><span>[2부] 객관식 · 단답형 · 서술형 퀴즈 (11번 ~ 20번)</span><span class="sec-tag">퀴즈 11~20번</span></div>');
+    htmlParts.push('<div class="part-header">[2부] 객관식 · 단답형 · 서술형 (11~20번)</div>');
     ws.questions.filter(function (q) { return q.part === 2; }).forEach(function (q) {
       htmlParts.push(renderQuestionCard(q, wsState.answers[String(q.num)]));
     });
@@ -510,16 +510,16 @@
     // Submit Card
     const hasSubmitted = wsState.submissions.length > 0;
     const btnText = teacherMode
-      ? '교사 모드: 채점 및 정답·해설 확인하기'
+      ? '교사 모드: 채점 및 정답 확인'
       : hasSubmitted
-        ? ws.shortLabel + ' 다시 제출하기 (공식 점수는 1차 제출 유지)'
-        : ws.shortLabel + ' 선생님께 제출하기';
+        ? '다시 제출하기 (공식 점수는 1차 유지)'
+        : '선생님께 제출하기';
 
     htmlParts.push(
       '<section class="submit-card">' +
         (hasSubmitted && !teacherMode
-          ? '<p class="lead-text" style="font-size:14px;color:var(--ok);font-weight:700;">이미 1차 제출을 완료했습니다 (정답률 ' + wsState.submissions[0].accuracy + '%). 소감을 보완해 재제출할 수 있지만, 공식 정답률은 1차 기록으로 유지됩니다.</p>'
-          : '<p class="lead-text" style="font-size:14px;color:var(--ink-muted);">모든 문항을 확인한 뒤 아래 버튼을 누르면 자동 채점되고 선생님께 전달됩니다.</p>') +
+          ? '<p class="lead-text" style="font-size:14px;color:var(--ok);font-weight:700;">1차 제출 완료 (' + wsState.submissions[0].accuracy + '%). 소감 보완 후 재제출할 수 있습니다.</p>'
+          : '<p class="lead-text" style="font-size:14px;color:var(--ink-muted);">모든 문항 확인 후 제출하면 바로 채점됩니다.</p>') +
         '<button type="button" id="submitBtn" class="btn-primary">' + escapeHtml(btnText) + '</button>' +
       '</section>'
     );
@@ -535,8 +535,8 @@
     if (q.type === 'ox') {
       inputHtml =
         '<div class="ox-row">' +
-          '<button type="button" class="ox-btn' + (userVal === 'O' ? ' active' : '') + '" data-q="' + q.num + '" data-val="O">O (맞다)</button>' +
-          '<button type="button" class="ox-btn' + (userVal === 'X' ? ' active' : '') + '" data-q="' + q.num + '" data-val="X">X (틀리다)</button>' +
+          '<button type="button" class="ox-btn' + (userVal === 'O' ? ' active' : '') + '" data-q="' + q.num + '" data-val="O">O</button>' +
+          '<button type="button" class="ox-btn' + (userVal === 'X' ? ' active' : '') + '" data-q="' + q.num + '" data-val="X">X</button>' +
         '</div>';
     } else if (q.type === 'mcq') {
       inputHtml =
@@ -563,7 +563,7 @@
         '<textarea class="textarea-box" data-q-text="' + q.num + '" placeholder="' + escapeHtml(q.placeholder || '') + '">' +
           escapeHtml(userVal || '') +
         '</textarea>' +
-        '<div class="char-hint"><span>정성껏 작성한 소감은 문화상품권 선정 시 중요하게 반영됩니다.</span><span id="q20Count">' + len + '자</span></div>';
+        '<div class="char-hint"><span>소감은 문화상품권 선정 시 반영됩니다.</span><span id="q20Count">' + len + '자</span></div>';
     }
 
     const imageHtml = q.image
@@ -604,7 +604,7 @@
         if (idx === -1) wsState.visitedSpaces.push(name);
         else wsState.visitedSpaces.splice(idx, 1);
         card.classList.toggle('visited');
-        card.querySelector('.visit-pill').textContent = card.classList.contains('visited') ? '✓ 확인함' : '현장 확인';
+        card.querySelector('.visit-pill').textContent = card.classList.contains('visited') ? '✓ 확인함' : '확인';
         saveState();
       }
       card.addEventListener('click', toggle);
@@ -979,6 +979,34 @@
     }
     if (!CONFIG.apiUrl && !teacherMode && els.previewModeBanner) {
       els.previewModeBanner.hidden = false;
+    }
+
+    if (els.qrSiteUrlText && CONFIG.siteUrl) {
+      els.qrSiteUrlText.textContent = CONFIG.siteUrl;
+    }
+    if (els.qrToggleBtn && els.qrDrawerBody) {
+      els.qrToggleBtn.addEventListener('click', function () {
+        const isOpen = !els.qrDrawerBody.hidden;
+        els.qrDrawerBody.hidden = isOpen;
+        els.qrToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+        if (els.qrToggleArrow) {
+          els.qrToggleArrow.textContent = isOpen ? '펼치기 ▾' : '접기 ▴';
+        }
+      });
+    }
+    if (els.copySiteUrlBtn) {
+      els.copySiteUrlBtn.addEventListener('click', function () {
+        const url = CONFIG.siteUrl || root.location.href.split('?')[0];
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            showToast('접속 주소를 복사했습니다.');
+          }).catch(function () {
+            showToast('주소: ' + url);
+          });
+        } else {
+          showToast('주소: ' + url);
+        }
+      });
     }
 
     els.studentNumber.addEventListener('input', function () {

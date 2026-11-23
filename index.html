@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>서대문형무소역사관 현장체험학습 활동지 · 역사 퀴즈</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="teacherModeBar" class="teacher-mode-bar" hidden>
+    <span>교사 미리보기 모드 (?교사) — 학번 입력 없이 채점·정답·해설을 바로 확인할 수 있습니다. (서버 저장 안 됨)</span>
+    <a href="./">학생 화면으로 돌아가기</a>
+  </div>
+
+  <!-- PDF 2·3쪽 상단 바 모티프: 얇은 고정 진행 바 -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="running-title">서대문형무소, 그날의 기억을 걷다</div>
+      <div class="running-status">
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-text" id="progressText">퀴즈 0 / 20</div>
+        <div class="save-badge" id="saveBadge" aria-live="polite">자동 저장됨</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- PDF 1쪽 모티프: 풀-블리드 짙은 벽돌 히어로 배너 + 국가사적 324호 스탬프 -->
+  <section class="hero-banner" aria-label="활동지 표지">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <div class="hero-kicker" id="headerKicker">현장체험학습 모바일 활동지 · 중학교 1학년</div>
+        <h1 class="hero-title" id="headerTitle">서대문형무소,<br />그날의 기억을 걷다</h1>
+        <p class="hero-subtitle">현장을 걸으며 자료를 읽고 퀴즈와 소감을 차근차근 작성해 보세요.</p>
+      </div>
+      <div class="heritage-stamp" aria-label="국가사적 324호">
+        <span class="stamp-top">국가사적</span>
+        <span class="stamp-num">324</span>
+        <span class="stamp-bot">호</span>
+      </div>
+    </div>
+  </section>
+
+  <main class="container">
+    <div id="previewModeBanner" class="notice-banner warn" hidden>
+      <strong>서버 연결 전 미리보기 모드:</strong> 현재 구글 시트 연동 주소(<code>config.js</code>)가 비어 있어 답안이 이 기기에만 임시 저장됩니다. 사이트 테스트는 그대로 가능하며, <a href="teacher.html">교사용 대시보드 미리보기</a>에서도 방금 제출한 결과를 확인할 수 있습니다.
+    </div>
+
+    <!-- 학생 정보 입력 (PDF 1쪽 이름/학년·반 서식 감성) -->
+    <section class="card student-card" aria-labelledby="studentInfoHeading">
+      <div class="section-head">
+        <div class="section-head-left">
+          <span class="sec-num-box" aria-hidden="true">✓</span>
+          <h2 class="section-title" id="studentInfoHeading">학생 정보 확인 (1학년)</h2>
+        </div>
+        <span class="sec-tag">필수 입력</span>
+      </div>
+      <div class="student-grid">
+        <div>
+          <span class="field-label">반 선택 (1~7반)</span>
+          <div class="class-pills" id="classPills" role="group" aria-label="반 선택"></div>
+        </div>
+        <div class="student-row-two">
+          <div>
+            <label class="field-label" for="studentNumber">번호</label>
+            <input
+              id="studentNumber"
+              class="input-box input-underline"
+              type="number"
+              inputmode="numeric"
+              min="1"
+              max="45"
+              placeholder="예: 12"
+            />
+          </div>
+          <div>
+            <label class="field-label" for="studentName">이름</label>
+            <input
+              id="studentName"
+              class="input-box input-underline"
+              type="text"
+              maxlength="20"
+              placeholder="이름을 입력하세요"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 활동지 선택 탭 -->
+    <section aria-label="활동지 선택">
+      <div class="ws-tabs" id="wsTabs"></div>
+    </section>
+
+    <!-- 동적 활동지 & 퀴즈 영역 -->
+    <div id="worksheetRoot"></div>
+
+    <!-- 제출 완료 확인증 영역 -->
+    <section id="resultSection" hidden></section>
+  </main>
+
+  <footer class="app-footer">
+    <span>서대문형무소역사관 현장체험학습</span>
+    <span aria-hidden="true">·</span>
+    <a href="teacher.html">1~7반 선생님 대시보드</a>
+    <a href="qr.html">현장 QR 인쇄 페이지</a>
+    <a href="?교사">교사 미리보기</a>
+  </footer>
+
+  <!-- 사진 확대 라이트박스 -->
+  <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="사진 확대 보기">
+    <div class="lightbox-inner">
+      <button type="button" class="lightbox-close" id="lightboxClose">닫기 ✕</button>
+      <img id="lightboxImg" src="" alt="" />
+      <p id="lightboxCaption" class="lightbox-caption"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>1~7반 교사용 대시보드 · 서대문형무소역사관 현장체험학습</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="teacher.css" />
+</head>
+<body>
+  <header class="dash-header">
+    <div class="dash-header-inner">
+      <div class="dash-brand">
+        <div class="dash-stamp" aria-hidden="true">
+          <span>국가사적</span>
+          <strong>324</strong>
+          <span>호</span>
+        </div>
+        <div class="dash-title-wrap">
+          <h1>서대문형무소역사관 1~7반 교사 대시보드</h1>
+          <div class="dash-subtitle">정답률 집계 · 반별 소감문 다운로드 · 반별 10명 문화상품권 선정</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="btn btn-header" href="./">학생용 사이트</a>
+        <a class="btn btn-header" href="qr.html">QR 인쇄</a>
+        <button type="button" class="btn btn-header" id="copyClassLinkBtn" hidden>담임 선생님 링크 복사</button>
+        <button type="button" class="btn btn-header" id="refreshBtn" hidden>새로고침</button>
+        <button type="button" class="btn btn-header" id="logoutBtn" hidden>잠금</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="dash-main">
+    <!-- 로그인 화면 -->
+    <section id="loginView" class="login-wrap">
+      <h2>선생님 로그인</h2>
+      <p class="login-desc">
+        1~7반 담임 선생님과 담당 선생님이 반별 정답률·소감문을 확인하고 문화상품권 10명 선정을 함께 진행하는 공간입니다.
+      </p>
+      <div class="field-group">
+        <label for="pinInput">교사용 비밀번호</label>
+        <input id="pinInput" class="input-control" type="password" placeholder="비밀번호 입력 (기본: seodaemun2026)" />
+      </div>
+      <div class="login-actions">
+        <button type="button" id="loginBtn" class="btn btn-primary">비밀번호로 입장하기</button>
+        <button type="button" id="demoEnterBtn" class="btn btn-outline">샘플 데이터로 바로 미리보기 (체험용)</button>
+      </div>
+      <p id="loginError" style="color:var(--bad);font-size:13.5px;font-weight:700;margin-top:10px;" hidden></p>
+    </section>
+
+    <!-- 대시보드 본문 -->
+    <section id="dashView" hidden>
+      <div id="modeBanner" class="mode-banner demo">
+        <div id="modeBannerText"></div>
+        <div id="modeBannerExtra"></div>
+      </div>
+
+      <nav class="class-tabs" id="classTabs" aria-label="반별 탭"></nav>
+      <div id="tabContent"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="data.js"></script>
+  <script src="teacher.js"></script>
+</body>
+</html>

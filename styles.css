@@ -459,68 +459,6 @@ a {
   line-height: 1.65;
 }
 
-/* Worksheet Switcher Tabs (Editorial) */
-.ws-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.ws-tab {
-  min-height: 64px;
-  padding: 11px 14px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-strong);
-  border-top: 3px solid var(--taupe);
-  background: var(--paper);
-  cursor: pointer;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 5px;
-  transition: all 0.15s ease;
-}
-
-.ws-tab.active {
-  border-color: var(--brick);
-  border-top-color: var(--brick-dark);
-  background: var(--brick);
-  color: #ffffff;
-}
-
-.ws-tab-title {
-  font-family: var(--font-serif);
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.ws-tab-badge {
-  display: inline-block;
-  align-self: flex-start;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 2px;
-  background: var(--sand);
-  color: var(--ink-muted);
-}
-
-.ws-tab.active .ws-tab-badge {
-  background: rgba(250, 247, 241, 0.2);
-  color: #ffffff;
-}
-
-.ws-tab-badge.done {
-  background: var(--ok-bg);
-  color: var(--ok);
-}
-
-.ws-tab.active .ws-tab-badge.done {
-  background: #faf7f1;
-  color: var(--brick);
-}
-
 /* Route Checklist (PDF 3쪽 추천 관람 순서 모티프) */
 .route-box {
   background: var(--paper);

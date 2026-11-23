@@ -427,6 +427,50 @@ select {
   border: 1px solid #dcc28e;
 }
 
+.badge-unsubmitted {
+  background: #ece3d5;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+}
+
+.badge-extra {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border: 1px solid #dfb4b4;
+}
+
+.btn-danger-sm {
+  min-height: 30px;
+  padding: 4px 9px;
+  border-radius: 2px;
+  border: 1px solid #d99b9b;
+  background: #ffffff;
+  color: var(--bad);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-danger-sm:hover {
+  background: var(--bad-bg);
+}
+
+.unsubmitted-row {
+  background: #f5efe6 !important;
+  color: var(--muted);
+}
+
+.reflection-card.unsubmitted-row {
+  border-top-color: var(--taupe);
+}
+
+.mismatch-note {
+  font-size: 11.5px;
+  color: var(--warn);
+  font-weight: 700;
+  margin-top: 2px;
+}
+
 /* Toolbar & Filters */
 .toolbar-row {
   display: flex;

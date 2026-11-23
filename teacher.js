@@ -4,7 +4,10 @@
   const SESSION_PIN_KEY = 'seodaemun_teacher_pin';
   const DEMO_SUBMISSIONS_KEY = 'seodaemun_demo_submissions';
   const DEMO_SELECTIONS_KEY = 'seodaemun_demo_selections';
-  const DEFAULT_PIN = 'seodaemun2026';
+
+  function normalizeName(value) {
+    return String(value == null ? '' : value).replace(/\s+/g, '').trim();
+  }
 
   function escapeCsvCell(value) {
     const str = String(value == null ? '' : value);
@@ -31,94 +34,179 @@
       .replace(/'/g, '&#39;');
   }
 
-  function aggregateStudents(submissions, worksheetFilter) {
-    const filter = worksheetFilter || 'all';
-    const byStudent = {};
+  function base64ToBytes(b64) {
+    if (typeof atob === 'function') {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+    return new Uint8Array(Buffer.from(b64, 'base64'));
+  }
 
-    (submissions || []).forEach(function (sub) {
-      if (filter !== 'all' && sub.worksheet !== filter) return;
-      const key = sub.classNo + '_' + sub.studentCode;
-      if (!byStudent[key]) {
-        byStudent[key] = {
-          classNo: Number(sub.classNo) || 0,
-          number: Number(sub.number) || 0,
-          studentCode: String(sub.studentCode || ''),
-          name: String(sub.name || ''),
-          basicSubs: [],
-          leafletSubs: []
-        };
-      }
-      if (sub.worksheet === 'basic') {
-        byStudent[key].basicSubs.push(sub);
-      } else if (sub.worksheet === 'leaflet') {
-        byStudent[key].leafletSubs.push(sub);
+  function getSubtleCrypto() {
+    if (typeof root !== 'undefined' && root.crypto && root.crypto.subtle) {
+      return root.crypto.subtle;
+    }
+    if (typeof require === 'function') {
+      return require('crypto').webcrypto.subtle;
+    }
+    return null;
+  }
+
+  async function decryptRoster(encryptedObj, pin) {
+    if (!encryptedObj || !encryptedObj.data) {
+      throw new Error('ROSTER_MISSING');
+    }
+    const subtle = getSubtleCrypto();
+    if (!subtle) {
+      throw new Error('CRYPTO_UNAVAILABLE');
+    }
+    const enc = new TextEncoder();
+    const salt = base64ToBytes(encryptedObj.salt);
+    const iv = base64ToBytes(encryptedObj.iv);
+    const cipherBytes = base64ToBytes(encryptedObj.data);
+    const baseKey = await subtle.importKey('raw', enc.encode(String(pin || '')), 'PBKDF2', false, ['deriveKey']);
+    const aesKey = await subtle.deriveKey(
+      { name: 'PBKDF2', salt: salt, iterations: encryptedObj.iterations || 150000, hash: 'SHA-256' },
+      baseKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+    try {
+      const plainBuf = await subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, cipherBytes);
+      const parsed = JSON.parse(new TextDecoder().decode(plainBuf));
+      if (!Array.isArray(parsed)) throw new Error('INVALID_ROSTER');
+      return parsed;
+    } catch (e) {
+      throw new Error('INVALID_PIN');
+    }
+  }
+
+  /**
+   * 실제 명렬표와 제출 내역을 병합해 학생별 제출·미제출 상태를 산출합니다.
+   * - 공식 정답률은 1차 제출 기준, 소감·다짐은 최신 제출 기준입니다.
+   * - 명단에 없는 테스트 제출 등은 isExtra: true (명단 외) 로 분리해 삭제/관리할 수 있습니다.
+   */
+  function mergeRosterWithSubmissions(roster, submissions) {
+    const entries = {};
+    const byClassAndNumName = {};
+    const byClassAndName = {};
+
+    (roster || []).forEach(function (r) {
+      const classNo = Number(r.classNo);
+      const number = Number(r.number);
+      const studentCode = String(r.studentCode || ('1' + classNo + String(number).padStart(2, '0')));
+      const name = String(r.name || '').trim();
+      const key = classNo + '_' + studentCode;
+      entries[key] = {
+        classNo: classNo,
+        number: number,
+        studentCode: studentCode,
+        name: name,
+        isExtra: false,
+        subs: []
+      };
+      byClassAndNumName[classNo + '_' + number + '_' + normalizeName(name)] = entries[key];
+      if (!byClassAndName[classNo + '_' + normalizeName(name)]) {
+        byClassAndName[classNo + '_' + normalizeName(name)] = entries[key];
       }
     });
 
-    function sortSubs(list) {
-      return list.slice().sort(function (a, b) {
+    const sortedRaw = (submissions || []).slice().sort(function (a, b) {
+      const aa = Number(a.attempt) || 1;
+      const ba = Number(b.attempt) || 1;
+      if (aa !== ba) return aa - ba;
+      return String(a.submittedAt || '').localeCompare(String(b.submittedAt || ''));
+    });
+
+    sortedRaw.forEach(function (sub) {
+      const classNo = Number(sub.classNo) || 0;
+      const num = Number(sub.number) || 0;
+      const norm = normalizeName(sub.name);
+      let target = byClassAndNumName[classNo + '_' + num + '_' + norm];
+      if (!target) {
+        target = byClassAndName[classNo + '_' + norm];
+      }
+      if (!target) {
+        const extraCode = String(sub.studentCode || ('1' + classNo + String(num).padStart(2, '0')));
+        const extraKey = 'extra_' + classNo + '_' + extraCode + '_' + norm;
+        if (!entries[extraKey]) {
+          entries[extraKey] = {
+            classNo: classNo,
+            number: num,
+            studentCode: extraCode,
+            name: String(sub.name || '').trim(),
+            isExtra: true,
+            subs: []
+          };
+        }
+        target = entries[extraKey];
+      }
+      target.subs.push(sub);
+    });
+
+    return Object.keys(entries).map(function (key) {
+      const entry = entries[key];
+      const subs = entry.subs.slice().sort(function (a, b) {
         const aa = Number(a.attempt) || 1;
         const ba = Number(b.attempt) || 1;
         if (aa !== ba) return aa - ba;
         return String(a.submittedAt || '').localeCompare(String(b.submittedAt || ''));
       });
-    }
 
-    return Object.keys(byStudent).map(function (key) {
-      const entry = byStudent[key];
-      const basicList = sortSubs(entry.basicSubs);
-      const leafletList = sortSubs(entry.leafletSubs);
+      if (subs.length === 0) {
+        return {
+          classNo: entry.classNo,
+          number: entry.number,
+          studentCode: entry.studentCode,
+          name: entry.name,
+          isExtra: entry.isExtra,
+          submitted: false,
+          attempts: 0,
+          score: null,
+          total: 19,
+          accuracy: null,
+          wrongItems: '',
+          activityThink: '',
+          selectedPick: '',
+          reflectionReason: '',
+          reflection20: '',
+          reflectionLength: 0,
+          firstSubmittedAt: '',
+          latestSubmittedAt: '',
+          inputNumberMismatch: false,
+          submittedNumber: null
+        };
+      }
 
-      const basicFirst = basicList[0] || null;
-      const basicLatest = basicList[basicList.length - 1] || null;
-      const leafletFirst = leafletList[0] || null;
-      const leafletLatest = leafletList[leafletList.length - 1] || null;
-
-      const scores = [];
-      if (basicFirst) scores.push(Number(basicFirst.accuracy) || 0);
-      if (leafletFirst) scores.push(Number(leafletFirst.accuracy) || 0);
-      const avgAcc = scores.length
-        ? Math.round((scores.reduce(function (s, v) { return s + v; }, 0) / scores.length) * 10) / 10
-        : 0;
-
-      // Choose primary reflection from latest submission (prefer leaflet if both latest exist at same time, else whichever has longer/newer reflection)
-      const latestCandidates = [];
-      if (basicLatest) latestCandidates.push(basicLatest);
-      if (leafletLatest) latestCandidates.push(leafletLatest);
-      latestCandidates.sort(function (a, b) {
-        return String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''));
-      });
-      const primaryLatest = latestCandidates[0] || {};
-
-      const firstTimes = [];
-      if (basicFirst && basicFirst.submittedAt) firstTimes.push(String(basicFirst.submittedAt));
-      if (leafletFirst && leafletFirst.submittedAt) firstTimes.push(String(leafletFirst.submittedAt));
-      firstTimes.sort();
-
-      const reflection20 = String(primaryLatest.reflection20 || '');
-      const activityThink = String(primaryLatest.activityThink || '');
-      const selectedPick = String(primaryLatest.selectedPick || '');
-      const reflectionReason = String(primaryLatest.reflectionReason || '');
+      const first = subs[0];
+      const latest = subs[subs.length - 1];
+      const reflection20 = String(latest.reflection20 || '');
+      const subNum = Number(latest.number) || entry.number;
 
       return {
         classNo: entry.classNo,
         number: entry.number,
         studentCode: entry.studentCode,
         name: entry.name,
-        accuracy: avgAcc,
-        basicAccuracy: basicFirst ? Number(basicFirst.accuracy) : null,
-        basicAttempts: basicList.length,
-        leafletAccuracy: leafletFirst ? Number(leafletFirst.accuracy) : null,
-        leafletAttempts: leafletList.length,
-        maxAttempts: Math.max(basicList.length, leafletList.length),
-        wrongItems: String(primaryLatest.wrongItems || ''),
-        activityThink: activityThink,
-        selectedPick: selectedPick,
-        reflectionReason: reflectionReason,
+        isExtra: entry.isExtra,
+        submitted: true,
+        attempts: subs.length,
+        score: Number(first.score) || 0,
+        total: Number(first.total) || 19,
+        accuracy: Number(first.accuracy) || 0,
+        wrongItems: String(first.wrongItems || ''),
+        activityThink: String(latest.activityThink || ''),
+        selectedPick: String(latest.selectedPick || ''),
+        reflectionReason: String(latest.reflectionReason || ''),
         reflection20: reflection20,
         reflectionLength: reflection20.trim().length,
-        firstSubmittedAt: firstTimes[0] || '',
-        latestSubmittedAt: String(primaryLatest.submittedAt || '')
+        firstSubmittedAt: String(first.submittedAt || ''),
+        latestSubmittedAt: String(latest.submittedAt || ''),
+        inputNumberMismatch: !entry.isExtra && subNum !== entry.number,
+        submittedNumber: subNum
       };
     });
   }
@@ -128,8 +216,18 @@
     return (students || []).slice().sort(function (a, b) {
       if (mode === 'number') {
         if (a.classNo !== b.classNo) return a.classNo - b.classNo;
+        if (a.isExtra !== b.isExtra) return a.isExtra ? 1 : -1;
+        if (a.number !== b.number) return a.number - b.number;
+        return a.name.localeCompare(b.name, 'ko');
+      }
+
+      // All other modes place submitted students first, unsubmitted students at bottom by number
+      if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
+      if (!a.submitted && !b.submitted) {
+        if (a.classNo !== b.classNo) return a.classNo - b.classNo;
         return a.number - b.number;
       }
+
       if (mode === 'reflection') {
         if (b.reflectionLength !== a.reflectionLength) return b.reflectionLength - a.reflectionLength;
         if (b.accuracy !== a.accuracy) return b.accuracy - a.accuracy;
@@ -140,6 +238,7 @@
         if (cmp !== 0) return cmp;
         return a.number - b.number;
       }
+
       // Default: accuracy desc -> reflectionLength desc -> firstSubmittedAt asc -> number asc
       if (b.accuracy !== a.accuracy) return b.accuracy - a.accuracy;
       if (b.reflectionLength !== a.reflectionLength) return b.reflectionLength - a.reflectionLength;
@@ -192,8 +291,9 @@
     const needed = keepExisting ? Math.max(0, targetCount - currentCount) : targetCount;
 
     const candidates = (students || []).filter(function (s) {
+      if (!s.submitted) return false;
       if (keepExisting && nextMap[s.studentCode]) return false;
-      return s.accuracy >= minAccuracy && s.reflectionLength >= minReflectionLen;
+      return Number(s.accuracy) >= minAccuracy && s.reflectionLength >= minReflectionLen;
     });
 
     if (needed === 0) {
@@ -237,17 +337,20 @@
       const selBadge = sel
         ? '<span class="sel-badge">선정 (' + escapeHtml(sel.method || '직접선정') + ')</span>'
         : '-';
+      const statusTxt = s.submitted ? s.accuracy + '%' : '<span style="color:#8c7768;">미제출</span>';
       return (
         '<tr>' +
           '<td class="num">' + escapeHtml(s.classNo + '반 ' + s.number + '번') + '</td>' +
           '<td class="name">' + escapeHtml(s.name) + '</td>' +
-          '<td class="acc">' + escapeHtml(s.accuracy + '%') + '</td>' +
+          '<td class="acc">' + statusTxt + '</td>' +
           '<td class="sel">' + selBadge + '</td>' +
           '<td class="pick">' + escapeHtml(s.selectedPick || '-') + '</td>' +
           '<td class="body">' +
-            (s.activityThink ? '<div class="sub-item"><strong>[생각해 보기/활동1]</strong> ' + escapeHtml(s.activityThink) + '</div>' : '') +
-            (s.reflectionReason ? '<div class="sub-item"><strong>[인상 깊은 이유]</strong> ' + escapeHtml(s.reflectionReason) + '</div>' : '') +
-            '<div class="sub-item"><strong>[20번 다짐·소감]</strong> ' + escapeHtml(s.reflection20 || '-') + '</div>' +
+            (s.submitted
+              ? (s.activityThink ? '<div class="sub-item"><strong>[활동 1]</strong> ' + escapeHtml(s.activityThink) + '</div>' : '') +
+                (s.reflectionReason ? '<div class="sub-item"><strong>[인상 깊은 이유]</strong> ' + escapeHtml(s.reflectionReason) + '</div>' : '') +
+                '<div class="sub-item"><strong>[20번 감사 편지·다짐]</strong> ' + escapeHtml(s.reflection20 || '-') + '</div>'
+              : '<span style="color:#8c7768;">미제출</span>') +
           '</td>' +
         '</tr>'
       );
@@ -277,127 +380,16 @@
     );
   }
 
-  function buildSampleDataset() {
-    const familyNames = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신'];
-    const givenNames = ['서준', '지우', '하은', '도윤', '수아', '민준', '예린', '시우', '지민', '유진', '건우', '채원', '현우', '소율'];
-    const picks = [
-      '여옥사(유관순 지하감옥)',
-      '격벽장',
-      '보안과청사·지하 고문실',
-      '사형장·시구문·미루나무',
-      '중앙사 및 옥사',
-      '유관순 열사',
-      '한용운 선사',
-      '안창호 선생',
-      '강우규 의사'
-    ];
-    const thinks = [
-      '적은 수의 간수가 한눈에 수감자들을 감시하고, 서로 눈빛이나 말도 나누지 못하도록 철저히 통제하기 위해 부채꼴로 설계했습니다.',
-      '독립운동가들의 의지를 꺾고 서로 연대하지 못하도록 운동 시간까지 칸막이로 갈라놓아 고립시키려 한 것이 인상 깊었습니다.',
-      '부채꼴 파놉티콘 구조는 감시 효율을 극대화해 수감자에게 끊임없이 감시당한다는 압박감을 주려던 일제의 통제 방식입니다.'
-    ];
-    const reasons = [
-      '좁고 어두운 감방에서도 끝까지 대한독립 만세를 외쳤다는 설명을 보고 큰 울림을 느꼈습니다.',
-      '운동장마저 벽으로 갈라놓은 격벽장을 직접 보니 당시의 숨 막히는 억압이 생생하게 전해졌습니다.',
-      '어린 나이와 고령을 가리지 않고 나라를 위해 목숨을 바친 용기가 너무나 감사하고 존경스러웠습니다.'
-    ];
-    const reflections = [
-      '오늘날 우리가 당연하게 누리는 자유와 평화가 수많은 독립운동가분들의 희생 위에서 이루어졌음을 깊이 깨달았습니다. 역사를 잊지 않고 일상 속에서 인권과 평화를 소중히 지키며 살아가겠습니다.',
-      '유관순 열사님과 이름 모를 많은 학생 독립운동가분들이 차가운 옥사에서도 꺾이지 않고 지켜 낸 대한민국을 더 정의롭고 따뜻한 나라로 이어가겠습니다. 정말 감사합니다.',
-      '사형장과 통곡의 미루나무 앞에서 발걸음이 떨어지지 않았습니다. 조국 독립을 못 본 채 눈을 감으셔야 했던 분들의 뜻을 기억하며 부끄럽지 않은 시민으로 성장하겠습니다.',
-      '교과서 글로만 보던 수형기록표와 지하 고문실을 직접 보며 마음이 무거워졌습니다. 아픈 역사를 정확히 기억하고 차별과 폭력에 맞서는 용기를 배우겠습니다.',
-      '독립운동가들의 희생에 진심으로 감사드리며 자유를 소중히 여기는 사람이 되겠습니다.'
-    ];
-    const scoresPool = [19, 19, 19, 18, 18, 17, 17, 16, 15, 14, 18, 16];
-
-    const submissions = [];
-    for (let c = 1; c <= 7; c += 1) {
-      const count = 12;
-      for (let idx = 0; idx < count; idx += 1) {
-        const number = idx + 1;
-        const name = familyNames[(c * 3 + idx) % familyNames.length] + givenNames[(c * 5 + idx) % givenNames.length];
-        const studentCode = '1' + c + String(number).padStart(2, '0');
-        const score = scoresPool[(c + idx) % scoresPool.length];
-        const accuracy = Math.round((score / 19) * 1000) / 10;
-        const ws = idx % 3 === 0 ? 'basic' : 'leaflet';
-        const ref = reflections[(c + idx) % reflections.length];
-        const minute = String(10 + idx * 3).padStart(2, '0');
-        submissions.push({
-          submittedAt: '2026-11-23 11:' + minute + ':15',
-          classNo: c,
-          number: number,
-          studentCode: studentCode,
-          name: name,
-          worksheet: ws,
-          score: score,
-          total: 19,
-          accuracy: accuracy,
-          attempt: 1,
-          wrongItems: score === 19 ? '' : '6번, 14번',
-          activityThink: thinks[(c + idx) % thinks.length],
-          selectedPick: picks[(c + idx) % picks.length],
-          reflectionReason: reasons[(c + idx) % reasons.length],
-          reflection20: ref,
-          reflectionLength: ref.length,
-          answersJson: '{}'
-        });
-
-        // Add dual-worksheet completion for first 2 students of each class
-        if (idx < 2) {
-          const otherWs = ws === 'basic' ? 'leaflet' : 'basic';
-          const score2 = Math.max(15, score - 1);
-          submissions.push({
-            submittedAt: '2026-11-23 11:' + String(48 + idx).padStart(2, '0') + ':02',
-            classNo: c,
-            number: number,
-            studentCode: studentCode,
-            name: name,
-            worksheet: otherWs,
-            score: score2,
-            total: 19,
-            accuracy: Math.round((score2 / 19) * 1000) / 10,
-            attempt: 1,
-            wrongItems: '12번',
-            activityThink: thinks[(c + idx) % thinks.length],
-            selectedPick: picks[(c + idx) % picks.length],
-            reflectionReason: reasons[(c + idx) % reasons.length],
-            reflection20: ref,
-            reflectionLength: ref.length,
-            answersJson: '{}'
-          });
-        }
-      }
-    }
-
-    // Pre-mark 1반 top 5 as sample selections so teachers see how selection sync works
-    const class1Students = sortStudents(
-      aggregateStudents(submissions.filter(function (s) { return s.classNo === 1; }), 'all'),
-      'accuracy'
-    );
-    const selections = class1Students.slice(0, 5).map(function (s) {
-      return {
-        classNo: 1,
-        studentCode: s.studentCode,
-        name: s.name,
-        accuracy: s.accuracy,
-        method: '직접선정',
-        selectedAt: '2026-11-23 11:52:00',
-        note: '샘플 선정'
-      };
-    });
-
-    return { submissions: submissions, selections: selections };
-  }
-
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
+      normalizeName: normalizeName,
       escapeCsvCell: escapeCsvCell,
       generateCsv: generateCsv,
       generateReflectionHtml: generateReflectionHtml,
-      aggregateStudents: aggregateStudents,
+      decryptRoster: decryptRoster,
+      mergeRosterWithSubmissions: mergeRosterWithSubmissions,
       sortStudents: sortStudents,
-      runConditionalDraw: runConditionalDraw,
-      buildSampleDataset: buildSampleDataset
+      runConditionalDraw: runConditionalDraw
     };
   }
 
@@ -417,7 +409,7 @@
     demoMode: false,
     pin: '',
     activeTab: initialClassParam >= 1 && initialClassParam <= 7 ? String(initialClassParam) : 'overview',
-    worksheetFilter: 'all',
+    statusFilter: 'all',
     sortMode: 'accuracy',
     searchQuery: '',
     viewMode: 'table',
@@ -427,6 +419,7 @@
     drawMinReflectionLen: 10,
     drawKeepExisting: true,
     justDrawnCodes: [],
+    roster: [],
     submissions: [],
     selectionsByClass: {},
     dirtyClasses: {}
@@ -437,7 +430,6 @@
     dashView: document.getElementById('dashView'),
     pinInput: document.getElementById('pinInput'),
     loginBtn: document.getElementById('loginBtn'),
-    demoEnterBtn: document.getElementById('demoEnterBtn'),
     loginError: document.getElementById('loginError'),
     modeBanner: document.getElementById('modeBanner'),
     modeBannerText: document.getElementById('modeBannerText'),
@@ -484,8 +476,7 @@
     return map;
   }
 
-  function loadLocalPreviewData() {
-    const sample = buildSampleDataset();
+  function loadLocalPreviewSubmissions() {
     let localSubs = [];
     try {
       const raw = root.localStorage.getItem(DEMO_SUBMISSIONS_KEY);
@@ -501,8 +492,8 @@
       savedSel = null;
     }
 
-    state.submissions = (localSubs || []).concat(sample.submissions);
-    state.selectionsByClass = organizeSelections(sample.selections);
+    state.submissions = Array.isArray(localSubs) ? localSubs : [];
+    state.selectionsByClass = organizeSelections([]);
     if (savedSel && typeof savedSel === 'object') {
       Object.keys(savedSel).forEach(function (c) {
         state.selectionsByClass[Number(c)] = savedSel[c];
@@ -522,6 +513,9 @@
     }
     state.submissions = json.submissions || [];
     state.selectionsByClass = organizeSelections(json.selections || []);
+    if (Array.isArray(json.roster) && json.roster.length > 0) {
+      state.roster = json.roster;
+    }
     state.dirtyClasses = {};
   }
 
@@ -535,7 +529,7 @@
       } catch (e) {}
       state.dirtyClasses[classNo] = false;
       renderAll();
-      showToast(classNo + '반 선정 명단(' + winners.length + '명)이 미리보기 브라우저에 저장되었습니다.');
+      showToast(classNo + '반 선정 명단(' + winners.length + '명)이 이 브라우저에 저장되었습니다.');
       return;
     }
 
@@ -564,18 +558,87 @@
     }
   }
 
-  function getClassStudents(classNo, filterOverride) {
-    const rawSubs = state.submissions.filter(function (s) {
-      return Number(s.classNo) === Number(classNo);
-    });
-    const filter = filterOverride !== undefined ? filterOverride : state.worksheetFilter;
-    return aggregateStudents(rawSubs, filter);
+  async function deleteStudentSubmission(student) {
+    const msg =
+      '1학년 ' + student.classNo + '반 ' + student.number + '번 ' + student.name +
+      ' 학생의 제출 기록(' + student.attempts + '건)을 삭제할까요?\n' +
+      '삭제하면 미제출 상태로 돌아가고 문화상품권 선정 명단에서도 함께 제외됩니다.';
+    if (!root.confirm(msg)) return;
+
+    if (state.demoMode || !CONFIG.apiUrl) {
+      try {
+        const raw = root.localStorage.getItem(DEMO_SUBMISSIONS_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        const normTarget = normalizeName(student.name);
+        const filtered = arr.filter(function (sub) {
+          if (Number(sub.classNo) !== Number(student.classNo)) return true;
+          const codeMatch = String(sub.studentCode || '') === String(student.studentCode);
+          const nameMatch = normalizeName(sub.name) === normTarget;
+          return !(codeMatch || nameMatch);
+        });
+        root.localStorage.setItem(DEMO_SUBMISSIONS_KEY, JSON.stringify(filtered));
+      } catch (e) {}
+
+      if (state.selectionsByClass[student.classNo]) {
+        delete state.selectionsByClass[student.classNo][student.studentCode];
+      }
+      try {
+        root.localStorage.setItem(DEMO_SELECTIONS_KEY, JSON.stringify(state.selectionsByClass));
+      } catch (e) {}
+
+      loadLocalPreviewSubmissions();
+      renderAll();
+      showToast(student.name + ' 학생의 제출 기록을 삭제했습니다.');
+      return;
+    }
+
+    try {
+      const res = await fetch(CONFIG.apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'deleteSubmission',
+          pin: state.pin,
+          classNo: student.classNo,
+          studentCode: student.studentCode,
+          name: student.name
+        }),
+        redirect: 'follow'
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (!json || json.ok === false) {
+        throw new Error((json && json.error) || 'DELETE_FAILED');
+      }
+      await fetchLiveDashboard(state.pin);
+      renderAll();
+      showToast(student.name + ' 학생의 구글 시트 제출 기록을 삭제했습니다.');
+    } catch (err) {
+      showToast('삭제에 실패했습니다: ' + err.message, true);
+    }
   }
 
-  function filterBySearch(students) {
+  function getMergedAllStudents() {
+    return mergeRosterWithSubmissions(state.roster, state.submissions);
+  }
+
+  function getClassStudents(classNo) {
+    const classRoster = state.roster.filter(function (r) { return Number(r.classNo) === Number(classNo); });
+    const classSubs = state.submissions.filter(function (s) { return Number(s.classNo) === Number(classNo); });
+    return mergeRosterWithSubmissions(classRoster, classSubs);
+  }
+
+  function applyClassFilters(students) {
+    let list = students;
+    if (state.statusFilter === 'submitted') {
+      list = list.filter(function (s) { return s.submitted; });
+    } else if (state.statusFilter === 'unsubmitted') {
+      list = list.filter(function (s) { return !s.submitted; });
+    }
+
     const q = String(state.searchQuery || '').trim().toLowerCase();
-    if (!q) return students;
-    return students.filter(function (s) {
+    if (!q) return list;
+    return list.filter(function (s) {
       return (
         s.name.toLowerCase().indexOf(q) !== -1 ||
         String(s.number).indexOf(q) !== -1 ||
@@ -587,6 +650,24 @@
     });
   }
 
+  const REFLECTION_CSV_HEADERS = [
+    '반',
+    '번호',
+    '학번',
+    '이름',
+    '제출여부',
+    '점수',
+    '정답률(%)',
+    '선정여부',
+    '선정방식',
+    '활동1_생각해보기',
+    '선택공간_인물',
+    '나만의기록_이유',
+    '20번_소감다짐',
+    '소감글자수',
+    '최초제출시각'
+  ];
+
   function buildCsvRowsForStudents(students, selectionsMapGlobal) {
     return students.map(function (s) {
       const selMap = selectionsMapGlobal[s.classNo] || {};
@@ -595,10 +676,10 @@
         s.classNo + '반',
         s.number,
         s.studentCode,
-        s.name,
-        s.basicAccuracy !== null ? s.basicAccuracy : '',
-        s.leafletAccuracy !== null ? s.leafletAccuracy : '',
-        s.accuracy,
+        s.name + (s.isExtra ? ' (명단외)' : ''),
+        s.submitted ? '제출완료' : '미제출',
+        s.submitted ? (s.score + '/' + s.total) : '',
+        s.submitted ? s.accuracy : '',
         sel ? '선정' : '',
         sel ? sel.method : '',
         s.activityThink,
@@ -611,32 +692,14 @@
     });
   }
 
-  const REFLECTION_CSV_HEADERS = [
-    '반',
-    '번호',
-    '학번',
-    '이름',
-    '활동지①정답률(%)',
-    '활동지②정답률(%)',
-    '대표정답률(%)',
-    '선정여부',
-    '선정방식',
-    '활동1_생각해보기',
-    '선택공간_인물',
-    '나만의기록_이유',
-    '20번_소감다짐',
-    '소감글자수',
-    '최초제출시각'
-  ];
-
   function exportClassReflectionsCsv(classNo) {
-    const students = sortStudents(getClassStudents(classNo, 'all'), 'number');
+    const students = sortStudents(getClassStudents(classNo), 'number');
     const csv = generateCsv(REFLECTION_CSV_HEADERS, buildCsvRowsForStudents(students, state.selectionsByClass));
     downloadTextFile('서대문형무소_1학년' + classNo + '반_소감문.csv', csv, 'text/csv;charset=utf-8');
   }
 
   function exportClassReflectionsHtml(classNo) {
-    const students = sortStudents(getClassStudents(classNo, 'all'), 'number');
+    const students = sortStudents(getClassStudents(classNo), 'number');
     const html = generateReflectionHtml(
       '서대문형무소역사관 현장체험학습 소감문 모음 (1학년 ' + classNo + '반)',
       students,
@@ -646,10 +709,10 @@
   }
 
   function exportClassWinnersCsv(classNo) {
-    const students = sortStudents(getClassStudents(classNo, 'all'), 'accuracy');
+    const students = sortStudents(getClassStudents(classNo), 'accuracy');
     const classSel = state.selectionsByClass[classNo] || {};
-    const winners = students.filter(function (s) { return Boolean(classSel[s.studentCode]); });
-    const headers = ['반', '번호', '학번', '이름', '대표정답률(%)', '선정방식', '소감글자수', '20번_소감다짐'];
+    const winners = students.filter(function (s) { return s.submitted && Boolean(classSel[s.studentCode]); });
+    const headers = ['반', '번호', '학번', '이름', '정답률(%)', '선정방식', '소감글자수', '20번_소감다짐'];
     const rows = winners.map(function (s) {
       const sel = classSel[s.studentCode];
       return [s.classNo + '반', s.number, s.studentCode, s.name, s.accuracy, sel.method, s.reflectionLength, s.reflection20];
@@ -658,14 +721,14 @@
   }
 
   function exportAllWinnersCsv() {
-    const headers = ['반', '번호', '학번', '이름', '대표정답률(%)', '선정방식', '선정시각', '20번_소감다짐'];
+    const headers = ['반', '번호', '학번', '이름', '정답률(%)', '선정방식', '선정시각', '20번_소감다짐'];
     const rows = [];
     (CONFIG.classes || [1, 2, 3, 4, 5, 6, 7]).forEach(function (c) {
-      const students = sortStudents(getClassStudents(c, 'all'), 'number');
+      const students = sortStudents(getClassStudents(c), 'number');
       const classSel = state.selectionsByClass[c] || {};
       students.forEach(function (s) {
         const sel = classSel[s.studentCode];
-        if (sel) {
+        if (sel && s.submitted) {
           rows.push([c + '반', s.number, s.studentCode, s.name, s.accuracy, sel.method, sel.selectedAt || '', s.reflection20]);
         }
       });
@@ -676,7 +739,7 @@
   function exportAllReflectionsCsv() {
     let allStudents = [];
     (CONFIG.classes || [1, 2, 3, 4, 5, 6, 7]).forEach(function (c) {
-      allStudents = allStudents.concat(sortStudents(getClassStudents(c, 'all'), 'number'));
+      allStudents = allStudents.concat(sortStudents(getClassStudents(c), 'number'));
     });
     const csv = generateCsv(REFLECTION_CSV_HEADERS, buildCsvRowsForStudents(allStudents, state.selectionsByClass));
     downloadTextFile('서대문형무소_1~7반_전체소감문.csv', csv, 'text/csv;charset=utf-8');
@@ -686,7 +749,7 @@
     let allStudents = [];
     const mergedSel = {};
     (CONFIG.classes || [1, 2, 3, 4, 5, 6, 7]).forEach(function (c) {
-      allStudents = allStudents.concat(sortStudents(getClassStudents(c, 'all'), 'number'));
+      allStudents = allStudents.concat(sortStudents(getClassStudents(c), 'number'));
       Object.assign(mergedSel, state.selectionsByClass[c] || {});
     });
     const html = generateReflectionHtml('서대문형무소역사관 현장체험학습 1~7반 전체 소감문', allStudents, mergedSel);
@@ -695,7 +758,9 @@
 
   function renderTabs() {
     const classes = CONFIG.classes || [1, 2, 3, 4, 5, 6, 7];
-    const allStudents = aggregateStudents(state.submissions, 'all');
+    const allStudents = getMergedAllStudents();
+    const rosterCount = allStudents.filter(function (s) { return !s.isExtra; }).length;
+    const submittedRosterCount = allStudents.filter(function (s) { return !s.isExtra && s.submitted; }).length;
     let totalWinners = 0;
     classes.forEach(function (c) {
       totalWinners += Object.keys(state.selectionsByClass[c] || {}).length;
@@ -705,18 +770,19 @@
     parts.push(
       '<button type="button" class="class-tab' + (state.activeTab === 'overview' ? ' active' : '') + '" data-tab="overview">' +
         '<span>전체 현황 (1~7반)</span>' +
-        '<span class="class-tab-meta">' + allStudents.length + '명 · 선정 ' + totalWinners + '/70</span>' +
+        '<span class="class-tab-meta">제출 ' + submittedRosterCount + '/' + rosterCount + ' · 선정 ' + totalWinners + '/70</span>' +
       '</button>'
     );
 
     classes.forEach(function (c) {
-      const cStudents = getClassStudents(c, 'all');
+      const cStudents = getClassStudents(c).filter(function (s) { return !s.isExtra; });
+      const subCnt = cStudents.filter(function (s) { return s.submitted; }).length;
       const selCount = Object.keys(state.selectionsByClass[c] || {}).length;
       const dirty = state.dirtyClasses[c] ? ' *' : '';
       parts.push(
         '<button type="button" class="class-tab' + (state.activeTab === String(c) ? ' active' : '') + '" data-tab="' + c + '">' +
           '<span>' + c + '반' + dirty + '</span>' +
-          '<span class="class-tab-meta">' + cStudents.length + '명 · ' + selCount + '/' + state.targetCount + '</span>' +
+          '<span class="class-tab-meta">제출 ' + subCnt + '/' + cStudents.length + ' · 선정 ' + selCount + '/' + state.targetCount + '</span>' +
         '</button>'
       );
     });
@@ -733,9 +799,12 @@
 
   function renderOverview() {
     const classes = CONFIG.classes || [1, 2, 3, 4, 5, 6, 7];
-    const allStudents = aggregateStudents(state.submissions, 'all');
-    const avgAll = allStudents.length
-      ? (Math.round((allStudents.reduce(function (s, st) { return s + st.accuracy; }, 0) / allStudents.length) * 10) / 10)
+    const allStudents = getMergedAllStudents();
+    const rosterOnly = allStudents.filter(function (s) { return !s.isExtra; });
+    const submittedRoster = rosterOnly.filter(function (s) { return s.submitted; });
+    const allSubmitted = allStudents.filter(function (s) { return s.submitted; });
+    const avgAll = allSubmitted.length
+      ? (Math.round((allSubmitted.reduce(function (s, st) { return s + st.accuracy; }, 0) / allSubmitted.length) * 10) / 10)
       : 0;
     let totalSelected = 0;
     classes.forEach(function (c) {
@@ -743,9 +812,12 @@
     });
 
     const cardsHtml = classes.map(function (c) {
-      const list = getClassStudents(c, 'all');
-      const avg = list.length
-        ? Math.round((list.reduce(function (s, st) { return s + st.accuracy; }, 0) / list.length) * 10) / 10
+      const list = getClassStudents(c);
+      const cRoster = list.filter(function (s) { return !s.isExtra; });
+      const cSub = cRoster.filter(function (s) { return s.submitted; });
+      const unsubCount = cRoster.length - cSub.length;
+      const avg = cSub.length
+        ? Math.round((cSub.reduce(function (s, st) { return s + st.accuracy; }, 0) / cSub.length) * 10) / 10
         : 0;
       const selCount = Object.keys(state.selectionsByClass[c] || {}).length;
       const done = selCount >= state.targetCount;
@@ -755,22 +827,22 @@
             '<span class="class-summary-name">1학년 ' + c + '반</span>' +
             '<span class="badge ' + (done ? 'badge-ok' : 'badge-warn') + '">' + selCount + ' / ' + state.targetCount + '명 선정</span>' +
           '</div>' +
-          '<div style="font-size:14px;">참여 학생: <strong>' + list.length + '명</strong></div>' +
-          '<div style="font-size:14px;">평균 정답률: <strong>' + avg + '%</strong></div>' +
-          '<div style="font-size:13px;color:var(--muted);margin-top:6px;">눌러서 ' + c + '반 소감·선정 보기 →</div>' +
+          '<div style="font-size:14px;">재적 <strong>' + cRoster.length + '명</strong> · 제출 <strong style="color:var(--ok);">' + cSub.length + '명</strong> · 미제출 <strong style="color:var(--bad);">' + unsubCount + '명</strong></div>' +
+          '<div style="font-size:14px;">제출자 평균 정답률: <strong>' + (cSub.length ? avg + '%' : '-') + '</strong></div>' +
+          '<div style="font-size:13px;color:var(--muted);margin-top:6px;">눌러서 ' + c + '반 미제출자·소감·선정 보기 →</div>' +
         '</div>'
       );
     }).join('');
 
     els.tabContent.innerHTML =
       '<div class="kpi-grid">' +
-        '<div class="kpi-card"><div class="kpi-label">전체 참여 학생</div><div class="kpi-value">' + allStudents.length + '명</div></div>' +
-        '<div class="kpi-card"><div class="kpi-label">1~7반 평균 정답률</div><div class="kpi-value">' + avgAll + '%</div></div>' +
+        '<div class="kpi-card"><div class="kpi-label">1학년 전체 제출 / 미제출</div><div class="kpi-value">' + submittedRoster.length + ' / ' + rosterOnly.length + '명</div><div style="font-size:12.5px;color:var(--muted);margin-top:2px;">미제출 ' + (rosterOnly.length - submittedRoster.length) + '명</div></div>' +
+        '<div class="kpi-card"><div class="kpi-label">제출 학생 평균 정답률</div><div class="kpi-value">' + (allSubmitted.length ? avgAll + '%' : '-') + '</div></div>' +
         '<div class="kpi-card"><div class="kpi-label">문화상품권 선정 현황</div><div class="kpi-value">' + totalSelected + ' / ' + (classes.length * state.targetCount) + '명</div></div>' +
       '</div>' +
       '<div class="card">' +
         '<div class="toolbar-row">' +
-          '<h2 style="margin:0;font-size:18px;color:var(--navy);">전체(1~7반) 통합 다운로드</h2>' +
+          '<h2 style="margin:0;font-size:18px;color:var(--ink);">전체(1~7반) 통합 다운로드</h2>' +
           '<div class="filter-group">' +
             '<button type="button" class="btn btn-primary" id="dlAllWinnersBtn">전체 선정 명단 CSV (' + totalSelected + '명)</button>' +
             '<button type="button" class="btn btn-navy" id="dlAllRefCsvBtn">1~7반 전체 소감문 CSV</button>' +
@@ -792,18 +864,22 @@
   }
 
   function renderClassView(classNo) {
-    const baseStudents = getClassStudents(classNo, state.worksheetFilter);
-    const filtered = filterBySearch(baseStudents);
+    const allClassStudents = getClassStudents(classNo);
+    const rosterStudents = allClassStudents.filter(function (s) { return !s.isExtra; });
+    const submittedCnt = rosterStudents.filter(function (s) { return s.submitted; }).length;
+    const unsubmittedList = sortStudents(rosterStudents.filter(function (s) { return !s.submitted; }), 'number');
+
+    const filtered = applyClassFilters(allClassStudents);
     const sorted = sortStudents(filtered, state.sortMode);
     const classSel = state.selectionsByClass[classNo] || {};
     const selectedCount = Object.keys(classSel).length;
     const isDirty = Boolean(state.dirtyClasses[classNo]);
 
-    // Draw panel candidate count preview
-    const allClassStudentsForDraw = sortStudents(getClassStudents(classNo, 'all'), 'accuracy');
+    const allClassStudentsForDraw = sortStudents(allClassStudents, 'accuracy');
     const drawCandidates = allClassStudentsForDraw.filter(function (s) {
+      if (!s.submitted) return false;
       if (state.drawKeepExisting && classSel[s.studentCode]) return false;
-      return s.accuracy >= state.drawMinAccuracy && s.reflectionLength >= state.drawMinReflectionLen;
+      return Number(s.accuracy) >= state.drawMinAccuracy && s.reflectionLength >= state.drawMinReflectionLen;
     });
     const neededNow = state.drawKeepExisting
       ? Math.max(0, state.targetCount - selectedCount)
@@ -815,28 +891,49 @@
 
     let bodyHtml = '';
     if (sorted.length === 0) {
-      bodyHtml = '<p style="text-align:center;padding:36px 12px;color:var(--muted);">조건에 맞는 제출 내역이 없습니다.</p>';
+      bodyHtml = '<p style="text-align:center;padding:36px 12px;color:var(--muted);">조건에 맞는 학생이 없습니다.</p>';
     } else if (state.viewMode === 'table') {
       const rows = sorted.map(function (s) {
         const sel = classSel[s.studentCode];
         const justDrawn = state.justDrawnCodes.indexOf(s.studentCode) !== -1;
-        const wsBadges = [];
-        if (s.basicAccuracy !== null) {
-          wsBadges.push('<span class="badge badge-navy">① ' + s.basicAccuracy + '%' + (s.basicAttempts > 1 ? ' (' + s.basicAttempts + '차)' : '') + '</span>');
+        const rowClass = [
+          sel && s.submitted ? 'selected-row' : '',
+          !s.submitted ? 'unsubmitted-row' : '',
+          justDrawn ? 'just-drawn' : ''
+        ].filter(Boolean).join(' ');
+
+        const badges = [];
+        if (!s.submitted) {
+          badges.push('<span class="badge badge-unsubmitted">미제출</span>');
+        } else {
+          badges.push('<span class="score-pill' + (s.accuracy >= 85 ? ' high' : '') + '">' + s.accuracy + '%</span>');
+          if (s.attempts > 1) {
+            badges.push('<span class="badge badge-navy">' + s.attempts + '차 제출</span>');
+          }
         }
-        if (s.leafletAccuracy !== null) {
-          wsBadges.push('<span class="badge badge-navy">② ' + s.leafletAccuracy + '%' + (s.leafletAttempts > 1 ? ' (' + s.leafletAttempts + '차)' : '') + '</span>');
+        if (s.isExtra) {
+          badges.push('<span class="badge badge-extra">명단 외</span>');
         }
+
         return (
-          '<tr class="' + (sel ? 'selected-row' : '') + (justDrawn ? ' just-drawn' : '') + '">' +
-            '<td><input type="checkbox" class="select-chk" data-toggle-sel="' + escapeHtml(s.studentCode) + '" ' + (sel ? 'checked' : '') + ' aria-label="' + escapeHtml(s.name) + ' 선정" /></td>' +
-            '<td><strong>' + s.number + '번</strong></td>' +
+          '<tr class="' + rowClass + '">' +
+            '<td><input type="checkbox" class="select-chk" data-toggle-sel="' + escapeHtml(s.studentCode) + '" ' + (sel && s.submitted ? 'checked' : '') + (!s.submitted ? ' disabled' : '') + ' aria-label="' + escapeHtml(s.name) + ' 선정" /></td>' +
+            '<td><strong>' + s.number + '번</strong>' + (s.inputNumberMismatch ? '<div class="mismatch-note">입력: ' + s.submittedNumber + '번</div>' : '') + '</td>' +
             '<td><strong>' + escapeHtml(s.name) + '</strong><div style="font-size:11.5px;color:var(--muted);">' + escapeHtml(s.studentCode) + '</div></td>' +
-            '<td><span class="score-pill' + (s.accuracy >= 85 ? ' high' : '') + '">' + s.accuracy + '%</span><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">' + wsBadges.join('') + '</div></td>' +
-            '<td>' + (sel ? '<span class="badge badge-gold">' + escapeHtml(sel.method || '직접선정') + '</span>' : '-') + '</td>' +
-            '<td><div class="reflection-preview">' + escapeHtml(s.reflection20 || '(미작성)') + '</div>' +
-              '<div class="reflection-meta">선택: ' + escapeHtml(s.selectedPick || '-') + ' · 소감 ' + s.reflectionLength + '자</div></td>' +
-            '<td style="white-space:nowrap;font-size:12.5px;color:var(--muted);">' + escapeHtml((s.firstSubmittedAt || '').slice(5, 16)) + '</td>' +
+            '<td><div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">' + badges.join('') + '</div></td>' +
+            '<td>' + (sel && s.submitted ? '<span class="badge badge-gold">' + escapeHtml(sel.method || '직접선정') + '</span>' : '-') + '</td>' +
+            '<td>' +
+              (s.submitted
+                ? '<div class="reflection-preview">' + escapeHtml(s.reflection20 || '(미작성)') + '</div>' +
+                  '<div class="reflection-meta">선택: ' + escapeHtml(s.selectedPick || '-') + ' · 소감 ' + s.reflectionLength + '자</div>'
+                : '<span style="font-size:13px;color:var(--muted);">아직 제출하지 않았습니다</span>') +
+            '</td>' +
+            '<td style="white-space:nowrap;font-size:12.5px;color:var(--muted);">' + (s.submitted ? escapeHtml((s.firstSubmittedAt || '').slice(5, 16)) : '-') + '</td>' +
+            '<td style="white-space:nowrap;">' +
+              (s.submitted
+                ? '<button type="button" class="btn-danger-sm" data-delete-sub="' + escapeHtml(s.studentCode) + '">제출 삭제</button>'
+                : '-') +
+            '</td>' +
           '</tr>'
         );
       }).join('');
@@ -844,7 +941,7 @@
       bodyHtml =
         '<div class="table-wrap">' +
           '<table class="data-table">' +
-            '<thead><tr><th>선정</th><th>번호</th><th>이름</th><th>정답률 (1차 공식)</th><th>방식</th><th>20번 소감·다짐 / 선택 공간</th><th>제출시각</th></tr></thead>' +
+            '<thead><tr><th>선정</th><th>번호</th><th>이름</th><th>제출·정답률</th><th>방식</th><th>20번 소감·다짐 / 선택 공간</th><th>제출시각</th><th>관리</th></tr></thead>' +
             '<tbody>' + rows + '</tbody>' +
           '</table>' +
         '</div>';
@@ -852,22 +949,38 @@
       const cards = sorted.map(function (s) {
         const sel = classSel[s.studentCode];
         const justDrawn = state.justDrawnCodes.indexOf(s.studentCode) !== -1;
+        const cardClass = [
+          'reflection-card',
+          sel && s.submitted ? 'selected-row' : '',
+          !s.submitted ? 'unsubmitted-row' : '',
+          justDrawn ? 'just-drawn' : ''
+        ].filter(Boolean).join(' ');
+
         return (
-          '<article class="reflection-card' + (sel ? ' selected-row' : '') + (justDrawn ? ' just-drawn' : '') + '">' +
+          '<article class="' + cardClass + '">' +
             '<div class="reflection-card-head">' +
               '<div>' +
-                '<div style="font-size:17px;font-weight:800;color:var(--navy);">' + s.number + '번 ' + escapeHtml(s.name) + '</div>' +
-                '<div style="font-size:12.5px;color:var(--muted);">정답률 <strong style="color:var(--brick);">' + s.accuracy + '%</strong> · 소감 ' + s.reflectionLength + '자</div>' +
+                '<div style="font-size:17px;font-weight:800;color:var(--ink);">' + s.number + '번 ' + escapeHtml(s.name) + (s.isExtra ? ' <span class="badge badge-extra">명단 외</span>' : '') + '</div>' +
+                (s.submitted
+                  ? '<div style="font-size:12.5px;color:var(--muted);">정답률 <strong style="color:var(--brick);">' + s.accuracy + '%</strong> · 소감 ' + s.reflectionLength + '자' + (s.attempts > 1 ? ' · ' + s.attempts + '차' : '') + '</div>'
+                  : '<div style="font-size:12.5px;color:var(--muted);">미제출 학생</div>') +
               '</div>' +
-              '<label style="display:inline-flex;align-items:center;gap:6px;font-weight:800;cursor:pointer;">' +
-                '<input type="checkbox" class="select-chk" data-toggle-sel="' + escapeHtml(s.studentCode) + '" ' + (sel ? 'checked' : '') + ' />' +
-                '<span>' + (sel ? '선정됨' : '선정') + '</span>' +
-              '</label>' +
+              '<div style="display:flex;align-items:center;gap:8px;">' +
+                (s.submitted
+                  ? '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:800;cursor:pointer;">' +
+                      '<input type="checkbox" class="select-chk" data-toggle-sel="' + escapeHtml(s.studentCode) + '" ' + (sel ? 'checked' : '') + ' />' +
+                      '<span>' + (sel ? '선정됨' : '선정') + '</span>' +
+                    '</label>' +
+                    '<button type="button" class="btn-danger-sm" data-delete-sub="' + escapeHtml(s.studentCode) + '">제출 삭제</button>'
+                  : '<span class="badge badge-unsubmitted">미제출</span>') +
+              '</div>' +
             '</div>' +
-            (s.selectedPick ? '<div class="reflection-block"><div class="reflection-block-label">선택한 공간 / 인물</div>' + escapeHtml(s.selectedPick) + '</div>' : '') +
-            (s.activityThink ? '<div class="reflection-block"><div class="reflection-block-label">생각해 보기 / 활동 1</div>' + escapeHtml(s.activityThink) + '</div>' : '') +
-            (s.reflectionReason ? '<div class="reflection-block"><div class="reflection-block-label">마음에 남은 이유</div>' + escapeHtml(s.reflectionReason) + '</div>' : '') +
-            '<div class="reflection-block"><div class="reflection-block-label">20번 감사 편지 · 다짐</div>' + escapeHtml(s.reflection20 || '(미작성)') + '</div>' +
+            (s.submitted
+              ? (s.selectedPick ? '<div class="reflection-block"><div class="reflection-block-label">선택한 공간 / 인물</div>' + escapeHtml(s.selectedPick) + '</div>' : '') +
+                (s.activityThink ? '<div class="reflection-block"><div class="reflection-block-label">활동 1 (부채꼴 설계 이유)</div>' + escapeHtml(s.activityThink) + '</div>' : '') +
+                (s.reflectionReason ? '<div class="reflection-block"><div class="reflection-block-label">마음에 남은 이유와 다짐</div>' + escapeHtml(s.reflectionReason) + '</div>' : '') +
+                '<div class="reflection-block"><div class="reflection-block-label">20번 감사 편지 · 다짐</div>' + escapeHtml(s.reflection20 || '(미작성)') + '</div>'
+              : '<div class="reflection-block">아직 활동지를 제출하지 않았습니다.</div>') +
           '</article>'
         );
       }).join('');
@@ -878,15 +991,15 @@
       '<div class="card">' +
         '<div class="toolbar-row">' +
           '<div class="filter-group">' +
-            '<h2 style="margin:0;font-size:20px;color:var(--navy);">1학년 ' + classNo + '반 (' + sorted.length + '명)</h2>' +
-            '<select id="wsFilterSel" class="select-sm" aria-label="활동지 필터">' +
-              '<option value="all"' + (state.worksheetFilter === 'all' ? ' selected' : '') + '>통합 보기 (학생별)</option>' +
-              '<option value="basic"' + (state.worksheetFilter === 'basic' ? ' selected' : '') + '>활동지 ① 기본형만</option>' +
-              '<option value="leaflet"' + (state.worksheetFilter === 'leaflet' ? ' selected' : '') + '>활동지 ② 리플릿형만</option>' +
+            '<h2 style="margin:0;font-size:20px;color:var(--ink);">1학년 ' + classNo + '반 · 재적 ' + rosterStudents.length + '명 <span style="font-size:14.5px;color:var(--muted);">(제출 ' + submittedCnt + '명 · 미제출 ' + unsubmittedList.length + '명)</span></h2>' +
+            '<select id="statusFilterSel" class="select-sm" aria-label="제출 상태 필터">' +
+              '<option value="all"' + (state.statusFilter === 'all' ? ' selected' : '') + '>전체 명단 (제출+미제출)</option>' +
+              '<option value="submitted"' + (state.statusFilter === 'submitted' ? ' selected' : '') + '>제출 완료만 (' + submittedCnt + '명)</option>' +
+              '<option value="unsubmitted"' + (state.statusFilter === 'unsubmitted' ? ' selected' : '') + '>미제출자만 보기 (' + unsubmittedList.length + '명)</option>' +
             '</select>' +
             '<select id="sortModeSel" class="select-sm" aria-label="정렬 기준">' +
               '<option value="accuracy"' + (state.sortMode === 'accuracy' ? ' selected' : '') + '>정답률 높은 순</option>' +
-              '<option value="number"' + (state.sortMode === 'number' ? ' selected' : '') + '>번호 순</option>' +
+              '<option value="number"' + (state.sortMode === 'number' ? ' selected' : '') + '>번호 순 (출석부)</option>' +
               '<option value="reflection"' + (state.sortMode === 'reflection' ? ' selected' : '') + '>소감 긴 순</option>' +
               '<option value="time"' + (state.sortMode === 'time' ? ' selected' : '') + '>제출 시각 순</option>' +
             '</select>' +
@@ -898,7 +1011,7 @@
           '</div>' +
         '</div>' +
 
-        '<!-- 반별 소감문 다운로드 + 선정 저장 바 -->' +
+        '<!-- 반별 소감문 다운로드 + 미제출자 복사 + 선정 저장 바 -->' +
         '<div class="action-bar">' +
           '<div class="selection-status">' +
             '<span class="selection-count">' + classNo + '반 문화상품권 선정: <strong>' + selectedCount + '</strong> / ' + state.targetCount + '명</span>' +
@@ -907,7 +1020,8 @@
             '<button type="button" class="btn btn-ok" id="saveSelBtn">' + classNo + '반 선정 결과 저장</button>' +
           '</div>' +
           '<div class="filter-group">' +
-            '<button type="button" class="btn btn-navy" id="dlClassRefCsvBtn">' + classNo + '반 소감문 CSV 다운로드</button>' +
+            '<button type="button" class="btn btn-outline" id="copyUnsubBtn">미제출자 명단 복사 (' + unsubmittedList.length + '명)</button>' +
+            '<button type="button" class="btn btn-navy" id="dlClassRefCsvBtn">' + classNo + '반 소감문 CSV</button>' +
             '<button type="button" class="btn btn-outline" id="dlClassRefHtmlBtn">' + classNo + '반 소감문 문서(인쇄/HTML)</button>' +
             '<button type="button" class="btn btn-outline" id="dlClassWinCsvBtn">' + classNo + '반 선정 명단 CSV</button>' +
           '</div>' +
@@ -916,7 +1030,7 @@
         '<!-- 조건부 / 동점자 추첨 패널 -->' +
         '<div class="draw-panel" id="drawPanel"' + (state.drawPanelOpen ? '' : ' hidden') + '>' +
           '<strong>조건부 / 동점자 랜덤 추첨 (' + classNo + '반)</strong>' +
-          '<p style="margin:4px 0 8px;font-size:13px;color:#78350f;">정답률 상위 동점자가 많거나, 일정 기준을 넘긴 학생들 가운데 공정하게 랜덤 추첨하고 싶을 때 사용하세요.</p>' +
+          '<p style="margin:4px 0 8px;font-size:13px;color:#54320c;">제출 완료한 학생 가운데 최소 정답률과 최소 소감 글자 수 조건을 충족하는 학생을 공정하게 랜덤 추첨합니다. (미제출자는 자동 제외)</p>' +
           '<div class="draw-grid">' +
             '<div>' +
               '<label style="font-size:13px;font-weight:700;">최소 정답률 (%)</label>' +
@@ -940,7 +1054,7 @@
             '</div>' +
           '</div>' +
           '<div class="draw-footer">' +
-            '<span style="font-size:13.5px;font-weight:700;color:#78350f;">현재 조건 충족 후보: <strong>' + drawCandidates.length + '명</strong> · 이번 추첨 예정: <strong>' + Math.min(neededNow, drawCandidates.length) + '명</strong></span>' +
+            '<span style="font-size:13.5px;font-weight:700;color:#54320c;">현재 조건 충족 후보: <strong>' + drawCandidates.length + '명</strong> · 이번 추첨 예정: <strong>' + Math.min(neededNow, drawCandidates.length) + '명</strong></span>' +
             '<div class="filter-group">' +
               '<button type="button" class="btn btn-outline" id="clearSelBtn">이 반 체크 전체 해제</button>' +
               '<button type="button" class="btn btn-primary" id="runDrawBtn">공정 랜덤 추첨 실행</button>' +
@@ -952,8 +1066,8 @@
       '</div>';
 
     // Bind events
-    document.getElementById('wsFilterSel').addEventListener('change', function (e) {
-      state.worksheetFilter = e.target.value;
+    document.getElementById('statusFilterSel').addEventListener('change', function (e) {
+      state.statusFilter = e.target.value;
       renderAll();
     });
     document.getElementById('sortModeSel').addEventListener('change', function (e) {
@@ -985,6 +1099,23 @@
     document.getElementById('saveSelBtn').addEventListener('click', function () {
       saveClassSelection(classNo);
     });
+    document.getElementById('copyUnsubBtn').addEventListener('click', function () {
+      if (unsubmittedList.length === 0) {
+        showToast(classNo + '반은 전원 제출을 완료했습니다!');
+        return;
+      }
+      const namesText = unsubmittedList.map(function (s) { return s.number + '번 ' + s.name; }).join(', ');
+      const text = '1학년 ' + classNo + '반 미제출자 (' + unsubmittedList.length + '명): ' + namesText;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          showToast(classNo + '반 미제출자 ' + unsubmittedList.length + '명 명단을 복사했습니다.');
+        }).catch(function () {
+          showToast(text);
+        });
+      } else {
+        showToast(text);
+      }
+    });
     document.getElementById('dlClassRefCsvBtn').addEventListener('click', function () {
       exportClassReflectionsCsv(classNo);
     });
@@ -1001,7 +1132,7 @@
         const code = chk.getAttribute('data-toggle-sel');
         const st = allClassStudentsForDraw.find(function (item) { return item.studentCode === code; });
         if (!state.selectionsByClass[classNo]) state.selectionsByClass[classNo] = {};
-        if (chk.checked && st) {
+        if (chk.checked && st && st.submitted) {
           state.selectionsByClass[classNo][code] = {
             classNo: classNo,
             studentCode: st.studentCode,
@@ -1016,6 +1147,15 @@
         }
         state.dirtyClasses[classNo] = true;
         renderAll();
+      });
+    });
+
+    // Delete submission buttons
+    els.tabContent.querySelectorAll('[data-delete-sub]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const code = btn.getAttribute('data-delete-sub');
+        const st = allClassStudents.find(function (item) { return item.studentCode === code && item.submitted; });
+        if (st) deleteStudentSubmission(st);
       });
     });
 
@@ -1074,7 +1214,7 @@
         return;
       }
       if (result.drawnCodes.length === 0) {
-        showToast('설정한 조건을 만족하는 미선정 후보 학생이 없습니다.', true);
+        showToast('설정한 조건을 만족하는 미선정 제출 학생이 없습니다.', true);
         return;
       }
       state.selectionsByClass[classNo] = result.selectedMap;
@@ -1089,11 +1229,11 @@
     if (state.demoMode || !CONFIG.apiUrl) {
       els.modeBanner.className = 'mode-banner demo';
       els.modeBannerText.innerHTML =
-        '<strong>샘플·미리보기 모드:</strong> 1~7반 체험용 학생 데이터(방금 학생 화면에서 제출한 미리보기 기록 포함)가 표시되고 있습니다. 구글 시트 연동 후 실제 반별 기록이 실시간으로 모입니다.';
+        '<strong>실제 명렬표 로드됨 (로컬 미리보기 모드):</strong> 대소중학교 1학년 138명 실제 명단이 적용되었습니다. 아직 구글 시트 연동 전이므로 이 브라우저에서 제출한 기록만 표시됩니다.';
     } else {
       els.modeBanner.className = 'mode-banner live';
       els.modeBannerText.innerHTML =
-        '<strong>구글 시트 실시간 연결됨:</strong> 1~7반 선생님들이 함께 조회하고 반별 10명 선정을 저장할 수 있습니다.';
+        '<strong>구글 시트 실시간 연결됨 (1학년 138명):</strong> 1~7반 선생님들이 함께 제출·미제출 확인, 제출 삭제, 반별 10명 선정을 진행할 수 있습니다.';
     }
     els.modeBannerExtra.textContent = state.activeTab === 'overview'
       ? '전체(1~7반) 보기 중'
@@ -1119,33 +1259,49 @@
 
   async function tryLoginWithPin(pin) {
     els.loginError.hidden = true;
-    if (!CONFIG.apiUrl) {
-      if (pin !== DEFAULT_PIN) {
-        els.loginError.textContent = '구글 시트 연결 전 기본 비밀번호는 ' + DEFAULT_PIN + ' 입니다. 또는 아래 샘플 미리보기를 누르세요.';
-        els.loginError.hidden = false;
-        return;
-      }
-      state.authenticated = true;
-      state.demoMode = true;
-      state.pin = pin;
-      loadLocalPreviewData();
-      renderAll();
+    if (!pin) {
+      els.loginError.textContent = '비밀번호를 입력해 주세요.';
+      els.loginError.hidden = false;
       return;
     }
 
     try {
       els.loginBtn.disabled = true;
-      els.loginBtn.textContent = '확인 중…';
+      els.loginBtn.textContent = '확인 및 명렬표 복호화 중…';
+
+      if (!CONFIG.apiUrl) {
+        const roster = await decryptRoster(root.SEODAEMUN_ENCRYPTED_ROSTER, pin);
+        state.roster = roster;
+        state.authenticated = true;
+        state.demoMode = true;
+        state.pin = pin;
+        loadLocalPreviewSubmissions();
+        try { root.sessionStorage.setItem(SESSION_PIN_KEY, pin); } catch (e) {}
+        renderAll();
+        return;
+      }
+
       await fetchLiveDashboard(pin);
+      if (state.roster.length === 0 && root.SEODAEMUN_ENCRYPTED_ROSTER) {
+        try {
+          state.roster = await decryptRoster(root.SEODAEMUN_ENCRYPTED_ROSTER, pin);
+        } catch (decErr) {
+          // If teacher changed PIN on server without re-encrypting roster-enc.js, Google Sheet 명렬표 tab handles it
+        }
+      }
       state.authenticated = true;
       state.demoMode = false;
       state.pin = pin;
       try { root.sessionStorage.setItem(SESSION_PIN_KEY, pin); } catch (e) {}
       renderAll();
     } catch (err) {
-      els.loginError.textContent = err.message === 'INVALID_PIN'
-        ? '비밀번호가 일치하지 않습니다.'
-        : '서버 연결 실패: ' + err.message;
+      if (err.message === 'CRYPTO_UNAVAILABLE') {
+        els.loginError.textContent = '보안 암호화 복호화를 위해 HTTPS 주소(GitHub Pages)에서 열어 주세요.';
+      } else if (err.message === 'INVALID_PIN') {
+        els.loginError.textContent = '비밀번호가 일치하지 않습니다.';
+      } else {
+        els.loginError.textContent = '로그인 실패: ' + err.message;
+      }
       els.loginError.hidden = false;
     } finally {
       els.loginBtn.disabled = false;
@@ -1161,20 +1317,12 @@
       if (e.key === 'Enter') tryLoginWithPin(els.pinInput.value.trim());
     });
 
-    els.demoEnterBtn.addEventListener('click', function () {
-      state.authenticated = true;
-      state.demoMode = true;
-      loadLocalPreviewData();
-      renderAll();
-      showToast('1~7반 샘플 데이터로 대시보드를 열었습니다.');
-    });
-
     els.refreshBtn.addEventListener('click', async function () {
       if (Object.keys(state.dirtyClasses).some(function (k) { return state.dirtyClasses[k]; })) {
         if (!root.confirm('아직 저장하지 않은 선정 체크가 있습니다. 새로고침하시겠습니까?')) return;
       }
       if (state.demoMode || !CONFIG.apiUrl) {
-        loadLocalPreviewData();
+        loadLocalPreviewSubmissions();
         renderAll();
         showToast('로컬 미리보기 데이터를 다시 불러왔습니다.');
       } else {
@@ -1205,6 +1353,7 @@
     els.logoutBtn.addEventListener('click', function () {
       state.authenticated = false;
       state.pin = '';
+      state.roster = [];
       try { root.sessionStorage.removeItem(SESSION_PIN_KEY); } catch (e) {}
       els.dashView.hidden = true;
       els.loginView.hidden = false;
@@ -1214,10 +1363,9 @@
       els.pinInput.value = '';
     });
 
-    // Auto-restore live session if PIN already stored
     try {
       const savedPin = root.sessionStorage.getItem(SESSION_PIN_KEY);
-      if (savedPin && CONFIG.apiUrl) {
+      if (savedPin) {
         tryLoginWithPin(savedPin);
       }
     } catch (e) {}

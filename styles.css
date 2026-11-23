@@ -328,6 +328,22 @@ a {
   white-space: nowrap;
 }
 
+.btn-reset-info {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brick);
+  background: var(--sand);
+  border: 1px solid var(--border-strong);
+  padding: 3px 9px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btn-reset-info:hover {
+  background: var(--sand-deep);
+}
+
 .lead-text {
   margin: 0 0 12px;
   color: var(--ink);

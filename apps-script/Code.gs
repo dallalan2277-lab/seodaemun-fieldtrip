@@ -14,9 +14,12 @@ const CLASS_LIST = [1, 2, 3, 4, 5, 6, 7];
 
 const SHEET_ALL = '전체제출';
 const SHEET_SELECTED = '선정명단';
+const SHEET_ROSTER = '명렬표';
 
 const PROP_SHEET_ID = 'SEODAEMUN_SHEET_ID';
 const PROP_TEACHER_PIN = 'SEODAEMUN_TEACHER_PIN';
+
+const HEADERS_ROSTER = ['반', '번호', '학번', '이름'];
 
 const HEADERS_SUBMISSION = [
   '제출시각',
@@ -117,11 +120,13 @@ function doGet(e) {
     const book = getSpreadsheet_();
     const submissions = readSubmissions_(book);
     const selections = readSelections_(book);
+    const roster = readRoster_(book);
     return jsonResponse_({
       ok: true,
       serverTime: formatSeoulNow_(),
       submissions: submissions,
-      selections: selections
+      selections: selections,
+      roster: roster
     });
   }
 
@@ -143,6 +148,9 @@ function doPost(e) {
   }
   if (action === 'saveSelection') {
     return handleSaveSelection_(body);
+  }
+  if (action === 'deleteSubmission') {
+    return handleDeleteSubmission_(body);
   }
   return jsonResponse_({ ok: false, error: 'UNKNOWN_ACTION' });
 }
@@ -280,6 +288,69 @@ function handleSaveSelection_(body) {
   }
 }
 
+function handleDeleteSubmission_(body) {
+  if (!verifyPin_(body.pin)) {
+    return jsonResponse_({ ok: false, error: 'INVALID_PIN' });
+  }
+  const classNo = Number(body.classNo);
+  const studentCode = String(body.studentCode || '').trim();
+  const name = normalizeName_(body.name || '');
+
+  if (CLASS_LIST.indexOf(classNo) === -1) {
+    return jsonResponse_({ ok: false, error: 'INVALID_CLASS' });
+  }
+  if (!studentCode && !name) {
+    return jsonResponse_({ ok: false, error: 'INVALID_TARGET' });
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return jsonResponse_({ ok: false, error: 'SERVER_BUSY' });
+  }
+
+  try {
+    const book = getSpreadsheet_();
+    const deletedAll = deleteMatchingRows_(book.getSheetByName(SHEET_ALL), classNo, studentCode, name, 1, 3, 4);
+    const deletedClass = deleteMatchingRows_(book.getSheetByName(classNo + '반'), classNo, studentCode, name, 1, 3, 4);
+    deleteMatchingRows_(book.getSheetByName(SHEET_SELECTED), classNo, studentCode, name, 0, 1, 2);
+    SpreadsheetApp.flush();
+
+    return jsonResponse_({
+      ok: true,
+      deletedAll: deletedAll,
+      deletedClass: deletedClass,
+      serverTime: formatSeoulNow_()
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteMatchingRows_(sheet, classNo, studentCode, normName, colClass, colCode, colName) {
+  if (!sheet || sheet.getLastRow() <= 1) return 0;
+  const lastRow = sheet.getLastRow();
+  const numCols = Math.max(colClass, colCode, colName) + 1;
+  const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  let deleted = 0;
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const r = values[i];
+    if (Number(r[colClass]) !== classNo) continue;
+    const rowCode = String(r[colCode] || '').trim();
+    const rowName = normalizeName_(r[colName] || '');
+    const codeMatch = Boolean(studentCode) && rowCode === studentCode;
+    const nameMatch = Boolean(normName) && rowName === normName;
+    if (codeMatch || nameMatch) {
+      sheet.deleteRow(i + 2);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+function normalizeName_(val) {
+  return String(val == null ? '' : val).replace(/\s+/g, '').trim();
+}
+
 function getSpreadsheet_() {
   const active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) return active;
@@ -371,6 +442,22 @@ function readSelections_(book) {
         method: String(r[4] || '직접선정'),
         selectedAt: formatCellDate_(r[5]),
         note: String(r[6] || '')
+      };
+    });
+}
+
+function readRoster_(book) {
+  const sheet = book.getSheetByName(SHEET_ROSTER);
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS_ROSTER.length).getValues();
+  return rows
+    .filter(function (r) { return Number(r[0]) >= 1 && String(r[3] || '').trim() !== ''; })
+    .map(function (r) {
+      return {
+        classNo: Number(r[0]),
+        number: Number(r[1]) || 0,
+        studentCode: String(r[2] || ''),
+        name: String(r[3] || '').trim()
       };
     });
 }

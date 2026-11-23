@@ -20,7 +20,7 @@
         </div>
         <div class="dash-title-wrap">
           <h1>서대문형무소역사관 1~7반 교사 대시보드</h1>
-          <div class="dash-subtitle">정답률 집계 · 반별 소감문 다운로드 · 반별 10명 문화상품권 선정</div>
+          <div class="dash-subtitle">1학년 반별 제출·미제출 확인 · 정답률 집계 · 소감문 다운로드 · 10명 선정 · 제출 삭제</div>
         </div>
       </div>
       <div class="header-actions">
@@ -38,7 +38,7 @@
     <section id="loginView" class="login-wrap">
       <h2>선생님 로그인</h2>
       <p class="login-desc">
-        1~7반 담임 선생님과 담당 선생님이 반별 정답률·소감문을 확인하고 문화상품권 10명 선정을 함께 진행하는 공간입니다.
+        교사용 비밀번호를 입력하면 1학년 1~7반 실제 재학생 명렬표(138명)가 복호화되어 반별 제출·미제출 현황 확인, 소감문 다운로드, 문화상품권 선정을 진행할 수 있습니다.
       </p>
       <div class="field-group">
         <label for="pinInput">교사용 비밀번호</label>
@@ -46,7 +46,6 @@
       </div>
       <div class="login-actions">
         <button type="button" id="loginBtn" class="btn btn-primary">비밀번호로 입장하기</button>
-        <button type="button" id="demoEnterBtn" class="btn btn-outline">샘플 데이터로 바로 미리보기 (체험용)</button>
       </div>
       <p id="loginError" style="color:var(--bad);font-size:13.5px;font-weight:700;margin-top:10px;" hidden></p>
     </section>
@@ -67,6 +66,7 @@
 
   <script src="config.js"></script>
   <script src="data.js"></script>
+  <script src="roster-enc.js"></script>
   <script src="teacher.js"></script>
 </body>
 </html>

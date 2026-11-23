@@ -57,7 +57,10 @@
           <span class="sec-num-box" aria-hidden="true">✓</span>
           <h2 class="section-title" id="studentInfoHeading">학생 정보 확인 (1학년)</h2>
         </div>
-        <span class="sec-tag">필수 입력</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button type="button" id="resetStudentBtn" class="btn-reset-info">입력 초기화</button>
+          <span class="sec-tag">필수 입력</span>
+        </div>
       </div>
       <div class="student-grid">
         <div>
@@ -91,12 +94,7 @@
       </div>
     </section>
 
-    <!-- 활동지 선택 탭 -->
-    <section aria-label="활동지 선택">
-      <div class="ws-tabs" id="wsTabs"></div>
-    </section>
-
-    <!-- 동적 활동지 & 퀴즈 영역 -->
+    <!-- 동적 리플릿형 활동지 & 퀴즈 영역 -->
     <div id="worksheetRoot"></div>
 
     <!-- 제출 완료 확인증 영역 -->

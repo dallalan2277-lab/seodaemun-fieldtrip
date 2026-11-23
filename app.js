@@ -178,10 +178,9 @@
 
   function loadState() {
     const base = {
-      activeTab: 'basic',
+      activeTab: 'leaflet',
       student: { grade: CONFIG.defaultGrade || 1, classNo: null, number: '', name: '' },
       worksheets: {
-        basic: createEmptyWorksheetState(),
         leaflet: createEmptyWorksheetState()
       }
     };
@@ -189,28 +188,23 @@
       const raw = root.localStorage.getItem(STORAGE_KEY);
       if (!raw) return base;
       const parsed = JSON.parse(raw);
-      if (parsed.activeTab && DATA.worksheets[parsed.activeTab]) {
-        base.activeTab = parsed.activeTab;
-      }
       if (parsed.student) {
         base.student = Object.assign(base.student, parsed.student);
       }
-      ['basic', 'leaflet'].forEach(function (id) {
-        if (parsed.worksheets && parsed.worksheets[id]) {
-          base.worksheets[id] = Object.assign(createEmptyWorksheetState(), parsed.worksheets[id]);
-          if (!base.worksheets[id].answers) base.worksheets[id].answers = {};
-          if (!Array.isArray(base.worksheets[id].checkedRoute)) base.worksheets[id].checkedRoute = [];
-          if (!Array.isArray(base.worksheets[id].visitedSpaces)) base.worksheets[id].visitedSpaces = [];
-          if (!Array.isArray(base.worksheets[id].submissions)) base.worksheets[id].submissions = [];
-        }
-      });
+      if (parsed.worksheets && parsed.worksheets.leaflet) {
+        base.worksheets.leaflet = Object.assign(createEmptyWorksheetState(), parsed.worksheets.leaflet);
+        if (!base.worksheets.leaflet.answers) base.worksheets.leaflet.answers = {};
+        if (!Array.isArray(base.worksheets.leaflet.checkedRoute)) base.worksheets.leaflet.checkedRoute = [];
+        if (!Array.isArray(base.worksheets.leaflet.visitedSpaces)) base.worksheets.leaflet.visitedSpaces = [];
+        if (!Array.isArray(base.worksheets.leaflet.submissions)) base.worksheets.leaflet.submissions = [];
+      }
     } catch (e) {
       // Ignore storage parse error
     }
     return base;
   }
 
-  const state = loadState();
+  let state = loadState();
   let lastGradedResult = null;
   let saveTimer = null;
   let toastTimer = null;
@@ -224,7 +218,7 @@
     classPills: document.getElementById('classPills'),
     studentNumber: document.getElementById('studentNumber'),
     studentName: document.getElementById('studentName'),
-    wsTabs: document.getElementById('wsTabs'),
+    resetStudentBtn: document.getElementById('resetStudentBtn'),
     worksheetRoot: document.getElementById('worksheetRoot'),
     resultSection: document.getElementById('resultSection'),
     lightbox: document.getElementById('lightbox'),
@@ -261,7 +255,7 @@
   }
 
   function updateProgress() {
-    const wsData = DATA.worksheets[state.activeTab];
+    const wsData = DATA.worksheet || DATA.worksheets[state.activeTab];
     const wsState = state.worksheets[state.activeTab];
     let answered = 0;
     wsData.questions.forEach(function (q) {
@@ -300,35 +294,6 @@
     });
     els.studentNumber.value = state.student.number || '';
     els.studentName.value = state.student.name || '';
-  }
-
-  function renderTabs() {
-    els.wsTabs.innerHTML = '';
-    ['basic', 'leaflet'].forEach(function (id) {
-      const ws = DATA.worksheets[id];
-      const wsState = state.worksheets[id];
-      const latestSub = wsState.submissions.length > 0 ? wsState.submissions[0] : null;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'ws-tab' + (state.activeTab === id ? ' active' : '');
-      const badgeClass = latestSub ? 'ws-tab-badge done' : 'ws-tab-badge';
-      const badgeText = latestSub
-        ? '1차 제출 완료 · ' + latestSub.accuracy + '%'
-        : '작성 가능 (미제출)';
-      btn.innerHTML =
-        '<span class="ws-tab-title">' + escapeHtml(ws.tabTitle) + '</span>' +
-        '<span class="' + badgeClass + '">' + escapeHtml(badgeText) + '</span>';
-      btn.addEventListener('click', function () {
-        if (state.activeTab === id) return;
-        state.activeTab = id;
-        lastGradedResult = null;
-        saveState();
-        renderTabs();
-        renderWorksheet();
-        renderResultSection();
-      });
-      els.wsTabs.appendChild(btn);
-    });
   }
 
   function openLightbox(src, title, caption) {
@@ -978,7 +943,6 @@
         localPreview: isLocalPreview
       };
 
-      renderTabs();
       renderWorksheet();
       renderResultSection();
       els.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -990,6 +954,23 @@
         submitBtn.textContent = ws.shortLabel + ' 다시 제출 시도하기';
       }
     }
+  }
+
+  function resetCurrentDeviceInput() {
+    if (!root.confirm('이 기기에 입력된 학번·이름과 활동지 답안을 초기화할까요?\n(이미 선생님께 제출된 기록은 지워지지 않습니다.)')) {
+      return;
+    }
+    try { root.localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    state = {
+      activeTab: 'leaflet',
+      student: { grade: CONFIG.defaultGrade || 1, classNo: null, number: '', name: '' },
+      worksheets: { leaflet: createEmptyWorksheetState() }
+    };
+    lastGradedResult = null;
+    renderStudentInfo();
+    renderWorksheet();
+    renderResultSection();
+    showToast('입력 내용을 초기화했습니다.');
   }
 
   function init() {
@@ -1008,6 +989,9 @@
       state.student.name = els.studentName.value;
       saveState();
     });
+    if (els.resetStudentBtn) {
+      els.resetStudentBtn.addEventListener('click', resetCurrentDeviceInput);
+    }
 
     els.lightboxClose.addEventListener('click', closeLightbox);
     els.lightbox.addEventListener('click', function (e) {
@@ -1018,7 +1002,6 @@
     });
 
     renderStudentInfo();
-    renderTabs();
     renderWorksheet();
     renderResultSection();
   }

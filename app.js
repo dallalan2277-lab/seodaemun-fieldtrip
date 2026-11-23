@@ -509,18 +509,19 @@
 
     // Submit Card
     const hasSubmitted = wsState.submissions.length > 0;
+    const isLockedSubmitted = !teacherMode && hasSubmitted;
     const btnText = teacherMode
       ? '교사 모드: 채점 및 정답 확인'
-      : hasSubmitted
-        ? '다시 제출하기 (공식 점수는 1차 유지)'
+      : isLockedSubmitted
+        ? '제출되었습니다'
         : '선생님께 제출하기';
 
     htmlParts.push(
       '<section class="submit-card">' +
-        (hasSubmitted && !teacherMode
-          ? '<p class="lead-text" style="font-size:14px;color:var(--ok);font-weight:700;">1차 제출 완료 (' + wsState.submissions[0].accuracy + '%). 소감 보완 후 재제출할 수 있습니다.</p>'
-          : '<p class="lead-text" style="font-size:14px;color:var(--ink-muted);">모든 문항 확인 후 제출하면 바로 채점됩니다.</p>') +
-        '<button type="button" id="submitBtn" class="btn-primary">' + escapeHtml(btnText) + '</button>' +
+        (isLockedSubmitted
+          ? '<p class="lead-text" style="font-size:14.5px;color:var(--ok);font-weight:700;">제출되었습니다.</p>'
+          : '<p class="lead-text" style="font-size:14px;color:var(--ink-muted);">모든 문항과 소감을 확인한 뒤 제출해 주세요.</p>') +
+        '<button type="button" id="submitBtn" class="btn-primary"' + (isLockedSubmitted ? ' disabled' : '') + '>' + escapeHtml(btnText) + '</button>' +
       '</section>'
     );
 
@@ -704,6 +705,7 @@
   }
 
   function applyFeedbackStyles() {
+    if (!teacherMode) return;
     if (!lastGradedResult || lastGradedResult.wsId !== state.activeTab) return;
     const ws = DATA.worksheets[state.activeTab];
     const details = lastGradedResult.graded.details;
@@ -755,8 +757,6 @@
       const latest = wsState.submissions[wsState.submissions.length - 1];
       certData = {
         wsId: wsId,
-        graded: { score: latest.score, total: latest.total, accuracy: latest.accuracy },
-        attempt: latest.attempt,
         submittedAt: latest.submittedAt,
         studentLabel: latest.studentLabel,
         localPreview: latest.localPreview
@@ -769,35 +769,42 @@
       return;
     }
 
-    const modeBadge = teacherMode
-      ? '교사 모드 채점 확인'
-      : certData.localPreview
-        ? '미리보기 임시 저장 완료'
-        : certData.attempt + '차 제출 완료';
+    if (teacherMode) {
+      els.resultSection.hidden = false;
+      els.resultSection.innerHTML =
+        '<div class="cert-card">' +
+          '<span class="cert-badge">교사 모드 채점 확인</span>' +
+          '<h2 class="cert-title">' + escapeHtml(ws.shortLabel + ' 확인증 · 교사 확인') + '</h2>' +
+          '<div class="cert-score-box">' +
+            '<div class="cert-stat"><div class="cert-stat-label">맞힌 개수</div><div class="cert-stat-val">' + certData.graded.score + ' / ' + certData.graded.total + '</div></div>' +
+            '<div class="cert-stat"><div class="cert-stat-label">정답률</div><div class="cert-stat-val">' + certData.graded.accuracy + '%</div></div>' +
+            '<div class="cert-stat"><div class="cert-stat-label">제출 차수</div><div class="cert-stat-val">' + (certData.attempt || 1) + '차</div></div>' +
+          '</div>' +
+          '<p class="cert-meta">확인 시각: ' + escapeHtml(formatKoreanDateTime(certData.submittedAt)) + '</p>' +
+          '<button type="button" class="btn-secondary" id="scrollTopQuestionsBtn">위에서 문항별 정답·해설 보기 ↑</button>' +
+        '</div>';
 
+      const scrollBtn = document.getElementById('scrollTopQuestionsBtn');
+      if (scrollBtn) {
+        scrollBtn.addEventListener('click', function () {
+          const firstQ = document.getElementById('q-1');
+          if (firstQ) firstQ.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+      return;
+    }
+
+    const modeBadge = certData.localPreview ? '미리보기 임시 저장 완료' : '제출 완료';
     els.resultSection.hidden = false;
     els.resultSection.innerHTML =
       '<div class="cert-card">' +
         '<span class="cert-badge">' + escapeHtml(modeBadge) + '</span>' +
-        '<h2 class="cert-title">' + escapeHtml(ws.shortLabel + ' 확인증 · ' + (certData.studentLabel || '교사 확인')) + '</h2>' +
-        '<div class="cert-score-box">' +
-          '<div class="cert-stat"><div class="cert-stat-label">맞힌 개수</div><div class="cert-stat-val">' + certData.graded.score + ' / ' + certData.graded.total + '</div></div>' +
-          '<div class="cert-stat"><div class="cert-stat-label">정답률</div><div class="cert-stat-val">' + certData.graded.accuracy + '%</div></div>' +
-          '<div class="cert-stat"><div class="cert-stat-label">제출 차수</div><div class="cert-stat-val">' + (certData.attempt || 1) + '차</div></div>' +
-        '</div>' +
-        '<p class="cert-meta">제출 시각: ' + escapeHtml(formatKoreanDateTime(certData.submittedAt)) +
+        '<h2 class="cert-title">제출되었습니다!</h2>' +
+        '<p class="lead-text" style="font-size:15px;margin-bottom:8px;">' + escapeHtml((certData.studentLabel || '') + ' 학생의 답안과 소감이 선생님께 정상 전달되었습니다.') + '</p>' +
+        '<p class="cert-meta" style="margin-bottom:0;">제출 시각: ' + escapeHtml(formatKoreanDateTime(certData.submittedAt)) +
           (certData.localPreview ? ' (구글 시트 연결 전이라 이 브라우저에만 저장되었습니다)' : '') +
         '</p>' +
-        '<button type="button" class="btn-secondary" id="scrollTopQuestionsBtn">위에서 문항별 정답·해설 보기 ↑</button>' +
       '</div>';
-
-    const scrollBtn = document.getElementById('scrollTopQuestionsBtn');
-    if (scrollBtn) {
-      scrollBtn.addEventListener('click', function () {
-        const firstQ = document.getElementById('q-1');
-        if (firstQ) firstQ.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    }
   }
 
   async function postWithRetry(url, payload) {
@@ -860,6 +867,11 @@
     const wsId = state.activeTab;
     const ws = DATA.worksheets[wsId];
     const wsState = state.worksheets[wsId];
+
+    if (!teacherMode && wsState.submissions.length > 0) {
+      showToast('이미 제출되었습니다.');
+      return;
+    }
 
     const check = validateSubmission(state.student, wsState, ws, teacherMode);
     if (!check.valid) {
@@ -925,9 +937,6 @@
 
       wsState.submissions.push({
         attempt: attempt,
-        score: graded.score,
-        total: graded.total,
-        accuracy: graded.accuracy,
         submittedAt: submittedAt,
         studentLabel: studentLabel,
         localPreview: isLocalPreview
@@ -936,8 +945,6 @@
 
       lastGradedResult = {
         wsId: wsId,
-        graded: graded,
-        attempt: attempt,
         submittedAt: submittedAt,
         studentLabel: studentLabel,
         localPreview: isLocalPreview
@@ -946,7 +953,7 @@
       renderWorksheet();
       renderResultSection();
       els.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      showToast(isLocalPreview ? '미리보기 모드로 채점·임시 저장되었습니다.' : '제출이 완료되었습니다!');
+      showToast('제출되었습니다!');
     } catch (err) {
       showToast('전송이 지연되고 있습니다. 네트워크 확인 후 다시 눌러 주세요.', true);
       if (submitBtn) {

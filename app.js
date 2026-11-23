@@ -509,19 +509,18 @@
 
     // Submit Card
     const hasSubmitted = wsState.submissions.length > 0;
-    const isLockedSubmitted = !teacherMode && hasSubmitted;
     const btnText = teacherMode
       ? '교사 모드: 채점 및 정답 확인'
-      : isLockedSubmitted
-        ? '제출되었습니다'
+      : hasSubmitted
+        ? '수정 후 다시 제출하기'
         : '선생님께 제출하기';
 
     htmlParts.push(
       '<section class="submit-card">' +
-        (isLockedSubmitted
-          ? '<p class="lead-text" style="font-size:14.5px;color:var(--ok);font-weight:700;">제출되었습니다.</p>'
+        (hasSubmitted && !teacherMode
+          ? '<p class="lead-text" style="font-size:14px;color:var(--ok);font-weight:700;">제출되었습니다. 내용을 수정한 뒤 다시 제출할 수 있습니다.</p>'
           : '<p class="lead-text" style="font-size:14px;color:var(--ink-muted);">모든 문항과 소감을 확인한 뒤 제출해 주세요.</p>') +
-        '<button type="button" id="submitBtn" class="btn-primary"' + (isLockedSubmitted ? ' disabled' : '') + '>' + escapeHtml(btnText) + '</button>' +
+        '<button type="button" id="submitBtn" class="btn-primary">' + escapeHtml(btnText) + '</button>' +
       '</section>'
     );
 
@@ -717,9 +716,13 @@
 
       card.classList.remove('correct', 'wrong', 'missing');
       if (q.type === 'essay') {
-        fb.className = 'q-feedback info';
-        fb.innerHTML = '<strong>참고 예시:</strong> ' + escapeHtml(q.sampleAnswer || '');
-        fb.hidden = false;
+        if (q.sampleAnswer) {
+          fb.className = 'q-feedback info';
+          fb.innerHTML = '<strong>참고 예시:</strong> ' + escapeHtml(q.sampleAnswer);
+          fb.hidden = false;
+        } else {
+          fb.hidden = true;
+        }
         return;
       }
 
@@ -869,8 +872,7 @@
     const wsState = state.worksheets[wsId];
 
     if (!teacherMode && wsState.submissions.length > 0) {
-      showToast('이미 제출되었습니다.');
-      return;
+      // 점수·정답은 공개하지 않고 수정 후 재제출은 허용합니다 (공식 점수는 1차 제출 기준).
     }
 
     const check = validateSubmission(state.student, wsState, ws, teacherMode);

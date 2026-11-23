@@ -59,7 +59,7 @@
     ],
     activityPromptTitle: '[활동 1] 부채꼴 설계의 이유',
     activityPromptText: '사진을 보고, 일제가 감옥과 격벽장을 부채꼴로 지은 이유와 통제 방식을 적어 보세요.',
-    activityPlaceholder: '예) 적은 간수로 여러 옥사를 감시하고 수감자 간 소통을 막기 위해서입니다.',
+    activityPlaceholder: '여기에 내 생각을 적어 보세요.',
     timelineTitle: '주요 연표',
     timeline: [
       { year: '1908년', event: '‘경성감옥’ 개소' },
@@ -105,7 +105,7 @@
     reflectionGuide: '가장 기억에 남는 공간·인물 하나를 고르고, 이유와 다짐을 적어 보세요.',
     reflectionPickLabel: '선택한 공간 / 인물',
     reflectionReasonLabel: '마음에 남은 이유',
-    reflectionReasonPlaceholder: '인상 깊었던 이유를 짧고 솔직하게 적어 보세요.',
+    reflectionReasonPlaceholder: '여기에 적어 보세요.',
     quickPicks: [
       '보안과청사·고문실',
       '중앙사·옥사',
@@ -222,7 +222,7 @@
       {
         num: 15, part: 2, type: 'short',
         text: '일제가 체포된 독립운동가들의 이름, 나이, 본적, 죄명, 사진 등을 기록해 관리하던 카드를 무엇이라 하나요? (힌트: ㅅㅎㄱㄹㅍ)',
-        placeholder: '힌트: ㅅㅎㄱㄹㅍ (5글자)',
+        placeholder: '정답을 입력하세요',
         answer: '수형기록표',
         explanation: '일제가 작성해 수감자들을 관리하던 신상 카드는 ‘수형기록표’입니다.'
       },
@@ -267,8 +267,8 @@
       {
         num: 20, part: 2, type: 'essay',
         text: '오늘날 우리가 누리는 자유와 평화를 위해 희생하신 독립운동가분들께 전하고 싶은 감사 편지나 다짐을 2줄 이상 적어 보세요.',
-        placeholder: '감사한 마음과 앞으로의 다짐을 자유롭게 적어 주세요.',
-        sampleAnswer: '예시: 독립운동가분들의 희생을 잊지 않고 평화와 인권을 소중히 지키겠습니다.',
+        placeholder: '여기에 자유롭게 적어 보세요.',
+        sampleAnswer: '',
         minLength: 10
       }
     ]

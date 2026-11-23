@@ -9,7 +9,7 @@
 // 5. [배포 > 새 배포] -> 유형: 웹 앱 / 실행 주체: 나 / 액세스 권한: 모든 사용자 -> 배포.
 // 6. 발급된 웹 앱 URL(/exec)을 config.js 의 apiUrl 에 입력하고 저장합니다.
 
-const DEFAULT_TEACHER_PIN = 'seodaemun2026';
+const DEFAULT_TEACHER_PIN = '0625';
 const CLASS_LIST = [1, 2, 3, 4, 5, 6, 7];
 
 const SHEET_ALL = '전체제출';

@@ -100,6 +100,29 @@
     return g + c + n;
   }
 
+  function generateSubmissionId() {
+    const cryptoObj = (typeof root !== 'undefined' && root.crypto) || null;
+    if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
+      return cryptoObj.randomUUID();
+    }
+    if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      cryptoObj.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = [];
+      for (let i = 0; i < bytes.length; i += 1) {
+        hex.push(bytes[i].toString(16).padStart(2, '0'));
+      }
+      return hex.slice(0, 4).join('') + '-' +
+        hex.slice(4, 6).join('') + '-' +
+        hex.slice(6, 8).join('') + '-' +
+        hex.slice(8, 10).join('') + '-' +
+        hex.slice(10, 16).join('');
+    }
+    return 'sub-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
   function buildSubmissionPayload(student, wsId, wsState, wsData, graded, defaultGrade) {
     const grade = Number(student.grade || defaultGrade || 1);
     const classNo = Number(student.classNo);
@@ -109,6 +132,7 @@
 
     return {
       action: 'submit',
+      submissionId: generateSubmissionId(),
       grade: grade,
       classNo: classNo,
       number: number,
@@ -147,6 +171,7 @@
       gradeQuiz: gradeQuiz,
       validateSubmission: validateSubmission,
       buildStudentCode: buildStudentCode,
+      generateSubmissionId: generateSubmissionId,
       buildSubmissionPayload: buildSubmissionPayload
     };
   }
@@ -846,6 +871,7 @@
       const raw = root.localStorage.getItem(DEMO_SUBMISSIONS_KEY);
       const arr = raw ? JSON.parse(raw) : [];
       arr.push({
+        submissionId: payload.submissionId || generateSubmissionId(),
         submittedAt: serverTime,
         classNo: payload.classNo,
         number: payload.number,
@@ -930,18 +956,21 @@
     try {
       let attempt = wsState.submissions.length + 1;
       let submittedAt = new Date().toISOString();
+      let submissionId = payload.submissionId;
       let isLocalPreview = false;
 
       if (CONFIG.apiUrl) {
         const resp = await postWithRetry(CONFIG.apiUrl, payload);
         attempt = resp.attempt || attempt;
         submittedAt = resp.serverTime || submittedAt;
+        submissionId = resp.submissionId || submissionId;
       } else {
         isLocalPreview = true;
         saveDemoSubmission(payload, attempt, submittedAt);
       }
 
       wsState.submissions.push({
+        submissionId: submissionId,
         attempt: attempt,
         submittedAt: submittedAt,
         studentLabel: studentLabel,

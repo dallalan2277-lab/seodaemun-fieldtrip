@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Noto+Serif+KR:wght@600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="teacher.css?v=20261123-8" />
+  <link rel="stylesheet" href="teacher.css?v=20261123-9" />
 </head>
 <body>
   <header class="dash-header">
@@ -65,11 +65,33 @@
     </section>
   </main>
 
+  <div id="deleteModal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <h3 id="deleteModalTitle">제출 기록 삭제 확인</h3>
+        <p id="deleteModalStudent" class="modal-subtitle"></p>
+      </div>
+      <div id="deleteSelectAllBar" class="delete-select-all" hidden>
+        <label class="delete-select-all-label">
+          <input type="checkbox" id="deleteSelectAllChk" checked />
+          <span>전체 선택</span>
+        </label>
+        <span id="deleteSelectedSummary" class="delete-selected-summary"></span>
+      </div>
+      <div id="deleteSubList" class="delete-sub-list"></div>
+      <p id="deleteModalNotice" class="delete-modal-notice"></p>
+      <div class="modal-actions">
+        <button type="button" id="deleteCancelBtn" class="btn btn-outline">취소</button>
+        <button type="button" id="deleteConfirmBtn" class="btn btn-danger">선택한 기록 삭제</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=20261123-8"></script>
-  <script src="data.js?v=20261123-8"></script>
-  <script src="roster-enc.js?v=20261123-8"></script>
-  <script src="teacher.js?v=20261123-8"></script>
+  <script src="config.js?v=20261123-9"></script>
+  <script src="data.js?v=20261123-9"></script>
+  <script src="roster-enc.js?v=20261123-9"></script>
+  <script src="teacher.js?v=20261123-9"></script>
 </body>
 </html>

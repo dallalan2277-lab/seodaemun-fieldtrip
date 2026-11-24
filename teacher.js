@@ -156,8 +156,25 @@
         return String(a.submittedAt || '').localeCompare(String(b.submittedAt || ''));
       });
 
+      const records = subs.map(function (sub) {
+        return {
+          submissionId: String(sub.submissionId || '').trim(),
+          submittedAt: String(sub.submittedAt || ''),
+          classNo: Number(sub.classNo) || entry.classNo,
+          number: Number(sub.number) || 0,
+          studentCode: String(sub.studentCode || ''),
+          name: String(sub.name || ''),
+          accuracy: Number(sub.accuracy) || 0,
+          score: Number(sub.score) || 0,
+          total: Number(sub.total) || 19,
+          attempt: Number(sub.attempt) || 1,
+          reflection20: String(sub.reflection20 || '')
+        };
+      });
+
       if (subs.length === 0) {
         return {
+          rowKey: key,
           classNo: entry.classNo,
           number: entry.number,
           studentCode: entry.studentCode,
@@ -177,7 +194,8 @@
           firstSubmittedAt: '',
           latestSubmittedAt: '',
           inputNumberMismatch: false,
-          submittedNumber: null
+          submittedNumber: null,
+          records: []
         };
       }
 
@@ -185,8 +203,12 @@
       const latest = subs[subs.length - 1];
       const reflection20 = String(latest.reflection20 || '');
       const subNum = Number(latest.number) || entry.number;
+      const mismatchSub = subs.find(function (sub) {
+        return Number(sub.number) !== entry.number;
+      });
 
       return {
+        rowKey: key,
         classNo: entry.classNo,
         number: entry.number,
         studentCode: entry.studentCode,
@@ -205,8 +227,9 @@
         reflectionLength: reflection20.trim().length,
         firstSubmittedAt: String(first.submittedAt || ''),
         latestSubmittedAt: String(latest.submittedAt || ''),
-        inputNumberMismatch: !entry.isExtra && subNum !== entry.number,
-        submittedNumber: subNum
+        inputNumberMismatch: !entry.isExtra && Boolean(mismatchSub),
+        submittedNumber: mismatchSub ? Number(mismatchSub.number) : subNum,
+        records: records
       };
     });
   }
@@ -380,6 +403,54 @@
     );
   }
 
+  function filterSubmissionsAfterDelete(submissions, classNo, submissionIds, legacyTargets) {
+    const targetClass = Number(classNo);
+    const idMap = {};
+    (submissionIds || []).forEach(function (id) {
+      const clean = String(id == null ? '' : id).trim();
+      if (clean) idMap[clean] = true;
+    });
+    const remainingLegacy = (legacyTargets || []).map(function (t) {
+      return {
+        submittedAt: String((t && t.submittedAt) || '').trim(),
+        classNo: Number(t && t.classNo) || targetClass,
+        number: Number(t && t.number) || 0,
+        studentCode: String((t && t.studentCode) || '').trim(),
+        name: normalizeName((t && t.name) || ''),
+        attempt: Number(t && t.attempt) || 1
+      };
+    });
+
+    return (submissions || []).filter(function (sub) {
+      if (Number(sub.classNo) !== targetClass) return true;
+      const subId = String(sub.submissionId || '').trim();
+      if (subId) {
+        return idMap[subId] !== true;
+      }
+      if (remainingLegacy.length === 0) return true;
+      const subSubmittedAt = String(sub.submittedAt || '').trim();
+      const subNum = Number(sub.number) || 0;
+      const subCode = String(sub.studentCode || '').trim();
+      const subNormName = normalizeName(sub.name || '');
+      const subAttempt = Number(sub.attempt) || 1;
+      for (let i = 0; i < remainingLegacy.length; i += 1) {
+        const t = remainingLegacy[i];
+        if (
+          subSubmittedAt === t.submittedAt &&
+          Number(t.classNo) === targetClass &&
+          subNum === t.number &&
+          subCode === t.studentCode &&
+          subNormName === t.name &&
+          subAttempt === t.attempt
+        ) {
+          remainingLegacy.splice(i, 1);
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       normalizeName: normalizeName,
@@ -388,6 +459,7 @@
       generateReflectionHtml: generateReflectionHtml,
       decryptRoster: decryptRoster,
       mergeRosterWithSubmissions: mergeRosterWithSubmissions,
+      filterSubmissionsAfterDelete: filterSubmissionsAfterDelete,
       sortStudents: sortStudents,
       runConditionalDraw: runConditionalDraw
     };
@@ -439,8 +511,19 @@
     copyClassLinkBtn: document.getElementById('copyClassLinkBtn'),
     refreshBtn: document.getElementById('refreshBtn'),
     logoutBtn: document.getElementById('logoutBtn'),
+    deleteModal: document.getElementById('deleteModal'),
+    deleteModalStudent: document.getElementById('deleteModalStudent'),
+    deleteSelectAllBar: document.getElementById('deleteSelectAllBar'),
+    deleteSelectAllChk: document.getElementById('deleteSelectAllChk'),
+    deleteSelectedSummary: document.getElementById('deleteSelectedSummary'),
+    deleteSubList: document.getElementById('deleteSubList'),
+    deleteModalNotice: document.getElementById('deleteModalNotice'),
+    deleteCancelBtn: document.getElementById('deleteCancelBtn'),
+    deleteConfirmBtn: document.getElementById('deleteConfirmBtn'),
     toast: document.getElementById('toast')
   };
+
+  let pendingDeleteState = null;
 
   let toastTimer = null;
   function showToast(msg, isError) {
@@ -558,37 +641,170 @@
     }
   }
 
-  async function deleteStudentSubmission(student) {
-    const msg =
+  function closeDeleteModal() {
+    pendingDeleteState = null;
+    if (els.deleteModal) {
+      els.deleteModal.hidden = true;
+    }
+    document.body.style.overflow = '';
+    if (els.deleteSubList) {
+      els.deleteSubList.innerHTML = '';
+    }
+  }
+
+  function updateDeleteModalState() {
+    if (!pendingDeleteState) return;
+    const student = pendingDeleteState.student;
+    const records = student.records || [];
+    const totalCount = records.length;
+    const selectedCount = pendingDeleteState.checked.filter(Boolean).length;
+
+    if (els.deleteSelectAllChk) {
+      els.deleteSelectAllChk.checked = totalCount > 0 && selectedCount === totalCount;
+      els.deleteSelectAllChk.indeterminate = selectedCount > 0 && selectedCount < totalCount;
+    }
+    if (els.deleteSelectedSummary) {
+      els.deleteSelectedSummary.textContent = selectedCount + ' / ' + totalCount + '건 선택됨';
+    }
+    if (els.deleteConfirmBtn) {
+      els.deleteConfirmBtn.disabled = selectedCount === 0;
+      els.deleteConfirmBtn.textContent = selectedCount > 0
+        ? '선택한 ' + selectedCount + '건 삭제'
+        : '삭제할 기록을 선택하세요';
+    }
+
+    const sel = (state.selectionsByClass[student.classNo] || {})[student.studentCode];
+    const hasOwnSelection = Boolean(sel && (!student.isExtra || normalizeName(sel.name) === normalizeName(student.name)));
+    const willDeleteAll = totalCount > 0 && selectedCount === totalCount;
+
+    if (els.deleteModalNotice) {
+      if (selectedCount === 0) {
+        els.deleteModalNotice.textContent = '삭제할 제출 기록을 1건 이상 체크해 주세요.';
+      } else if (willDeleteAll) {
+        els.deleteModalNotice.textContent =
+          '선택한 ' + totalCount + '건을 모두 삭제하면 이 학생은 미제출 상태가 됩니다.' +
+          (hasOwnSelection ? ' 문화상품권 선정 명단에서도 함께 제외됩니다.' : '');
+      } else {
+        els.deleteModalNotice.textContent =
+          '체크한 ' + selectedCount + '건만 삭제하고 나머지 ' + (totalCount - selectedCount) + '건은 유지합니다. ' +
+          '번호를 잘못 입력했더라도 다른 학생이나 나머지 제출 기록은 지워지지 않습니다.';
+      }
+    }
+  }
+
+  function openDeleteModal(student) {
+    if (!student || !Array.isArray(student.records) || student.records.length === 0) return;
+    if (!els.deleteModal || !els.deleteSubList) return;
+
+    pendingDeleteState = {
+      student: student,
+      checked: student.records.map(function () { return true; })
+    };
+
+    els.deleteModalStudent.textContent =
       '1학년 ' + student.classNo + '반 ' + student.number + '번 ' + student.name +
-      ' 학생의 제출 기록(' + student.attempts + '건)을 삭제할까요?\n' +
-      '삭제하면 미제출 상태로 돌아가고 문화상품권 선정 명단에서도 함께 제외됩니다.';
-    if (!root.confirm(msg)) return;
+      (student.isExtra ? ' (명단 외)' : '') + ' · 총 ' + student.records.length + '건 제출';
+    els.deleteSelectAllBar.hidden = student.records.length < 2;
+
+    els.deleteSubList.innerHTML = student.records.map(function (rec, idx) {
+      const hasMismatch = !student.isExtra && Number(rec.number) !== Number(student.number);
+      const idText = rec.submissionId
+        ? '고유ID: ' + rec.submissionId.slice(0, 8) + '…'
+        : 'ID 미부여 (시각·학번·이름 일치 기준 삭제)';
+      const preview = String(rec.reflection20 || '').trim() || '(20번 소감 미작성)';
+      return (
+        '<label class="delete-sub-item checked" data-del-row="' + idx + '">' +
+          '<input type="checkbox" class="delete-item-chk" data-del-idx="' + idx + '" checked />' +
+          '<div class="delete-sub-body">' +
+            '<div class="delete-sub-top">' +
+              '<span class="badge badge-navy">' + rec.attempt + '차 제출</span>' +
+              '<span class="delete-sub-time">' + escapeHtml(rec.submittedAt || '(제출 시각 없음)') + '</span>' +
+              '<span class="score-pill' + (rec.accuracy >= 85 ? ' high' : '') + '">' + rec.accuracy + '% (' + rec.score + '/' + rec.total + ')</span>' +
+            '</div>' +
+            '<div class="delete-sub-meta">' +
+              '<span>입력: ' + rec.classNo + '반 ' + rec.number + '번 ' + escapeHtml(rec.name) + ' (' + escapeHtml(rec.studentCode) + ')</span>' +
+              (hasMismatch ? '<span class="delete-sub-mismatch">번호 오입력 (명단: ' + student.number + '번)</span>' : '') +
+              '<span class="delete-sub-id">' + escapeHtml(idText) + '</span>' +
+            '</div>' +
+            '<div class="delete-sub-preview">' + escapeHtml(preview) + '</div>' +
+          '</div>' +
+        '</label>'
+      );
+    }).join('');
+
+    els.deleteSubList.querySelectorAll('.delete-item-chk').forEach(function (chk) {
+      chk.addEventListener('change', function () {
+        if (!pendingDeleteState) return;
+        const idx = Number(chk.getAttribute('data-del-idx'));
+        pendingDeleteState.checked[idx] = chk.checked;
+        const rowEl = els.deleteSubList.querySelector('[data-del-row="' + idx + '"]');
+        if (rowEl) rowEl.classList.toggle('checked', chk.checked);
+        updateDeleteModalState();
+      });
+    });
+
+    updateDeleteModalState();
+    els.deleteModal.hidden = false;
+    document.body.style.overflow = 'hidden';
+    if (els.deleteCancelBtn) {
+      els.deleteCancelBtn.focus({ preventScroll: true });
+    }
+  }
+
+  async function confirmDeleteSelectedSubmissions() {
+    if (!pendingDeleteState) return;
+    const student = pendingDeleteState.student;
+    const records = student.records || [];
+    const checkedRecords = records.filter(function (_rec, idx) {
+      return Boolean(pendingDeleteState.checked[idx]);
+    });
+    if (checkedRecords.length === 0) return;
+
+    const submissionIds = [];
+    const legacyTargets = [];
+    checkedRecords.forEach(function (rec) {
+      if (rec.submissionId) {
+        submissionIds.push(rec.submissionId);
+      } else {
+        legacyTargets.push({
+          submittedAt: rec.submittedAt,
+          classNo: rec.classNo,
+          number: rec.number,
+          studentCode: rec.studentCode,
+          name: rec.name,
+          attempt: rec.attempt
+        });
+      }
+    });
+    const removeSelectionIfEmpty = checkedRecords.length === records.length;
+
+    if (els.deleteConfirmBtn) {
+      els.deleteConfirmBtn.disabled = true;
+      els.deleteConfirmBtn.textContent = '삭제 처리 중…';
+    }
 
     if (state.demoMode || !CONFIG.apiUrl) {
       try {
         const raw = root.localStorage.getItem(DEMO_SUBMISSIONS_KEY);
         const arr = raw ? JSON.parse(raw) : [];
-        const normTarget = normalizeName(student.name);
-        const filtered = arr.filter(function (sub) {
-          if (Number(sub.classNo) !== Number(student.classNo)) return true;
-          const codeMatch = String(sub.studentCode || '') === String(student.studentCode);
-          const nameMatch = normalizeName(sub.name) === normTarget;
-          return !(codeMatch || nameMatch);
-        });
+        const filtered = filterSubmissionsAfterDelete(arr, student.classNo, submissionIds, legacyTargets);
         root.localStorage.setItem(DEMO_SUBMISSIONS_KEY, JSON.stringify(filtered));
       } catch (e) {}
 
-      if (state.selectionsByClass[student.classNo]) {
-        delete state.selectionsByClass[student.classNo][student.studentCode];
+      if (removeSelectionIfEmpty && state.selectionsByClass[student.classNo]) {
+        const existingSel = state.selectionsByClass[student.classNo][student.studentCode];
+        if (!student.isExtra || (existingSel && normalizeName(existingSel.name) === normalizeName(student.name))) {
+          delete state.selectionsByClass[student.classNo][student.studentCode];
+        }
       }
       try {
         root.localStorage.setItem(DEMO_SELECTIONS_KEY, JSON.stringify(state.selectionsByClass));
       } catch (e) {}
 
+      closeDeleteModal();
       loadLocalPreviewSubmissions();
       renderAll();
-      showToast(student.name + ' 학생의 제출 기록을 삭제했습니다.');
+      showToast(student.name + ' 학생의 제출 기록 ' + checkedRecords.length + '건을 삭제했습니다.');
       return;
     }
 
@@ -600,8 +816,12 @@
           action: 'deleteSubmission',
           pin: state.pin,
           classNo: student.classNo,
+          submissionIds: submissionIds,
+          legacyTargets: legacyTargets,
           studentCode: student.studentCode,
-          name: student.name
+          name: student.name,
+          isExtra: student.isExtra,
+          removeSelectionIfEmpty: removeSelectionIfEmpty
         }),
         redirect: 'follow'
       });
@@ -610,11 +830,13 @@
       if (!json || json.ok === false) {
         throw new Error((json && json.error) || 'DELETE_FAILED');
       }
+      closeDeleteModal();
       await fetchLiveDashboard(state.pin);
       renderAll();
-      showToast(student.name + ' 학생의 구글 시트 제출 기록을 삭제했습니다.');
+      showToast(student.name + ' 학생의 구글 시트 제출 기록 ' + checkedRecords.length + '건을 삭제했습니다.');
     } catch (err) {
       showToast('삭제에 실패했습니다: ' + err.message, true);
+      updateDeleteModalState();
     }
   }
 
@@ -931,7 +1153,7 @@
             '<td style="white-space:nowrap;font-size:12.5px;color:var(--muted);">' + (s.submitted ? escapeHtml((s.firstSubmittedAt || '').slice(5, 16)) : '-') + '</td>' +
             '<td style="white-space:nowrap;">' +
               (s.submitted
-                ? '<button type="button" class="btn-danger-sm" data-delete-sub="' + escapeHtml(s.studentCode) + '">제출 삭제</button>'
+                ? '<button type="button" class="btn-danger-sm" data-delete-key="' + escapeHtml(s.rowKey) + '">제출 삭제</button>'
                 : '-') +
             '</td>' +
           '</tr>'
@@ -971,7 +1193,7 @@
                       '<input type="checkbox" class="select-chk" data-toggle-sel="' + escapeHtml(s.studentCode) + '" ' + (sel ? 'checked' : '') + ' />' +
                       '<span>' + (sel ? '선정됨' : '선정') + '</span>' +
                     '</label>' +
-                    '<button type="button" class="btn-danger-sm" data-delete-sub="' + escapeHtml(s.studentCode) + '">제출 삭제</button>'
+                    '<button type="button" class="btn-danger-sm" data-delete-key="' + escapeHtml(s.rowKey) + '">제출 삭제</button>'
                   : '<span class="badge badge-unsubmitted">미제출</span>') +
               '</div>' +
             '</div>' +
@@ -1151,11 +1373,13 @@
     });
 
     // Delete submission buttons
-    els.tabContent.querySelectorAll('[data-delete-sub]').forEach(function (btn) {
+    els.tabContent.querySelectorAll('[data-delete-key]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        const code = btn.getAttribute('data-delete-sub');
-        const st = allClassStudents.find(function (item) { return item.studentCode === code && item.submitted; });
-        if (st) deleteStudentSubmission(st);
+        const key = btn.getAttribute('data-delete-key');
+        const st = allClassStudents.find(function (item) {
+          return item.rowKey === key && item.submitted;
+        });
+        if (st) openDeleteModal(st);
       });
     });
 
@@ -1351,6 +1575,7 @@
     });
 
     els.logoutBtn.addEventListener('click', function () {
+      closeDeleteModal();
       state.authenticated = false;
       state.pin = '';
       state.roster = [];
@@ -1361,6 +1586,39 @@
       els.refreshBtn.hidden = true;
       els.logoutBtn.hidden = true;
       els.pinInput.value = '';
+    });
+
+    if (els.deleteCancelBtn) {
+      els.deleteCancelBtn.addEventListener('click', closeDeleteModal);
+    }
+    if (els.deleteConfirmBtn) {
+      els.deleteConfirmBtn.addEventListener('click', confirmDeleteSelectedSubmissions);
+    }
+    if (els.deleteSelectAllChk) {
+      els.deleteSelectAllChk.addEventListener('change', function () {
+        if (!pendingDeleteState) return;
+        const checkedAll = els.deleteSelectAllChk.checked;
+        pendingDeleteState.checked = pendingDeleteState.checked.map(function () { return checkedAll; });
+        if (els.deleteSubList) {
+          els.deleteSubList.querySelectorAll('.delete-item-chk').forEach(function (chk) {
+            chk.checked = checkedAll;
+          });
+          els.deleteSubList.querySelectorAll('[data-del-row]').forEach(function (rowEl) {
+            rowEl.classList.toggle('checked', checkedAll);
+          });
+        }
+        updateDeleteModalState();
+      });
+    }
+    if (els.deleteModal) {
+      els.deleteModal.addEventListener('click', function (e) {
+        if (e.target === els.deleteModal) closeDeleteModal();
+      });
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && els.deleteModal && !els.deleteModal.hidden) {
+        closeDeleteModal();
+      }
     });
 
     try {

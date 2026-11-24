@@ -38,7 +38,12 @@ const HEADERS_SUBMISSION = [
   '나만의기록_이유',
   '20번_소감다짐',
   '소감글자수',
-  '답안JSON'
+  '답안JSON',
+  '제출ID'
+];
+
+const WIDTHS_SUBMISSION = [
+  155, 55, 55, 75, 85, 85, 55, 55, 85, 75, 160, 260, 140, 260, 320, 85, 280, 250
 ];
 
 const HEADERS_SELECTED = [
@@ -62,14 +67,10 @@ function setup() {
       throw new Error('구글 시트의 [확장 프로그램 > Apps Script]에서 열어 실행해 주세요.');
     }
 
-    ensureSheetWithHeader_(book, SHEET_ALL, HEADERS_SUBMISSION, [
-      155, 55, 55, 75, 85, 85, 55, 55, 85, 75, 160, 260, 140, 260, 320, 85, 280
-    ]);
+    ensureSheetWithHeader_(book, SHEET_ALL, HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
 
     CLASS_LIST.forEach(function (c) {
-      ensureSheetWithHeader_(book, c + '반', HEADERS_SUBMISSION, [
-        155, 55, 55, 75, 85, 85, 55, 55, 85, 75, 160, 260, 140, 260, 320, 85, 280
-      ]);
+      ensureSheetWithHeader_(book, c + '반', HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
     });
 
     ensureSheetWithHeader_(book, SHEET_SELECTED, HEADERS_SELECTED, [
@@ -178,12 +179,13 @@ function handleSubmit_(body) {
 
   try {
     const book = getSpreadsheet_();
-    const allSheet = ensureSheetWithHeader_(book, SHEET_ALL, HEADERS_SUBMISSION);
-    const classSheet = ensureSheetWithHeader_(book, classNo + '반', HEADERS_SUBMISSION);
+    const allSheet = ensureSheetWithHeader_(book, SHEET_ALL, HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
+    const classSheet = ensureSheetWithHeader_(book, classNo + '반', HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
 
-    const studentCode = String(body.studentCode || ('1' + classNo + String(number).padStart(2, '0')));
-    const attempt = countPreviousAttempts_(allSheet, studentCode, worksheet) + 1;
+    const studentCode = String(body.studentCode || ('1' + classNo + String(number).padStart(2, '0'))).trim();
+    const attempt = countPreviousAttempts_(allSheet, studentCode, name, worksheet) + 1;
     const nowStr = formatSeoulNow_();
+    const submissionId = String(body.submissionId || '').trim() || Utilities.getUuid();
 
     const row = [
       nowStr,
@@ -202,7 +204,8 @@ function handleSubmit_(body) {
       String(body.reflectionReason || ''),
       String(body.reflection20 || ''),
       Number(body.reflectionLength) || String(body.reflection20 || '').trim().length,
-      String(body.answersJson || '{}')
+      String(body.answersJson || '{}'),
+      submissionId
     ];
 
     allSheet.appendRow(row);
@@ -212,7 +215,8 @@ function handleSubmit_(body) {
     return jsonResponse_({
       ok: true,
       attempt: attempt,
-      serverTime: nowStr
+      serverTime: nowStr,
+      submissionId: submissionId
     });
   } finally {
     lock.releaseLock();
@@ -293,13 +297,52 @@ function handleDeleteSubmission_(body) {
     return jsonResponse_({ ok: false, error: 'INVALID_PIN' });
   }
   const classNo = Number(body.classNo);
-  const studentCode = String(body.studentCode || '').trim();
-  const name = normalizeName_(body.name || '');
+  const targetCode = String(body.studentCode || '').trim();
+  const targetNormName = normalizeName_(body.name || '');
+  const isExtra = Boolean(body.isExtra);
+  const removeSelectionIfEmpty = body.removeSelectionIfEmpty !== false;
 
   if (CLASS_LIST.indexOf(classNo) === -1) {
     return jsonResponse_({ ok: false, error: 'INVALID_CLASS' });
   }
-  if (!studentCode && !name) {
+
+  const rawIds = [];
+  if (Array.isArray(body.submissionIds)) {
+    body.submissionIds.forEach(function (v) { rawIds.push(v); });
+  } else if (body.submissionId) {
+    rawIds.push(body.submissionId);
+  }
+  const idMap = {};
+  const submissionIds = [];
+  rawIds.forEach(function (v) {
+    const clean = String(v == null ? '' : v).trim();
+    if (clean && !idMap[clean]) {
+      idMap[clean] = true;
+      submissionIds.push(clean);
+    }
+  });
+
+  const legacyTargets = [];
+  if (Array.isArray(body.legacyTargets)) {
+    body.legacyTargets.forEach(function (t) {
+      if (!t || typeof t !== 'object') return;
+      const tSubmittedAt = String(t.submittedAt || '').trim();
+      const tClassNo = Number(t.classNo) || classNo;
+      const tCode = String(t.studentCode || '').trim();
+      const tName = normalizeName_(t.name || '');
+      if (!tSubmittedAt || !tCode || !tName || tClassNo !== classNo) return;
+      legacyTargets.push({
+        submittedAt: tSubmittedAt,
+        classNo: tClassNo,
+        number: Number(t.number) || 0,
+        studentCode: tCode,
+        name: tName,
+        attempt: Number(t.attempt) || 1
+      });
+    });
+  }
+
+  if (submissionIds.length === 0 && legacyTargets.length === 0) {
     return jsonResponse_({ ok: false, error: 'INVALID_TARGET' });
   }
 
@@ -310,15 +353,24 @@ function handleDeleteSubmission_(body) {
 
   try {
     const book = getSpreadsheet_();
-    const deletedAll = deleteMatchingRows_(book.getSheetByName(SHEET_ALL), classNo, studentCode, name, 1, 3, 4);
-    const deletedClass = deleteMatchingRows_(book.getSheetByName(classNo + '반'), classNo, studentCode, name, 1, 3, 4);
-    deleteMatchingRows_(book.getSheetByName(SHEET_SELECTED), classNo, studentCode, name, 0, 1, 2);
+    const allSheet = book.getSheetByName(SHEET_ALL);
+    const classSheet = book.getSheetByName(classNo + '반');
+    const deletedAll = deleteSubmissionRowsExact_(allSheet, classNo, idMap, legacyTargets);
+    const deletedClass = deleteSubmissionRowsExact_(classSheet, classNo, idMap, legacyTargets);
+
+    const remainingCount = countRemainingStudentSubmissions_(allSheet, classNo, targetCode, targetNormName, isExtra);
+    let removedSelection = 0;
+    if (removeSelectionIfEmpty && remainingCount === 0 && targetCode && targetNormName) {
+      removedSelection = deleteSelectionExact_(book.getSheetByName(SHEET_SELECTED), classNo, targetCode, targetNormName);
+    }
     SpreadsheetApp.flush();
 
     return jsonResponse_({
       ok: true,
       deletedAll: deletedAll,
       deletedClass: deletedClass,
+      remainingCount: remainingCount,
+      removedSelection: removedSelection,
       serverTime: formatSeoulNow_()
     });
   } finally {
@@ -326,21 +378,98 @@ function handleDeleteSubmission_(body) {
   }
 }
 
-function deleteMatchingRows_(sheet, classNo, studentCode, normName, colClass, colCode, colName) {
+function getReadableSubmissionColCount_(sheet) {
+  if (typeof sheet.getMaxColumns === 'function') {
+    const maxCols = Number(sheet.getMaxColumns()) || 0;
+    if (maxCols > 0) {
+      return Math.min(maxCols, HEADERS_SUBMISSION.length);
+    }
+  }
+  return HEADERS_SUBMISSION.length;
+}
+
+function deleteSubmissionRowsExact_(sheet, classNo, idMap, legacyTargets) {
   if (!sheet || sheet.getLastRow() <= 1) return 0;
   const lastRow = sheet.getLastRow();
-  const numCols = Math.max(colClass, colCode, colName) + 1;
+  const numCols = getReadableSubmissionColCount_(sheet);
   const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  const remainingLegacy = (legacyTargets || []).slice();
+  let deleted = 0;
+
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const r = values[i];
+    if (Number(r[1]) !== classNo) continue;
+    const rowId = numCols >= 18 ? String(r[17] || '').trim() : '';
+    if (rowId) {
+      if (idMap[rowId] === true) {
+        sheet.deleteRow(i + 2);
+        deleted += 1;
+      }
+    } else if (remainingLegacy.length > 0) {
+      const rowSubmittedAt = formatCellDate_(r[0]);
+      const rowNumber = Number(r[2]) || 0;
+      const rowCode = String(r[3] || '').trim();
+      const rowNormName = normalizeName_(r[4]);
+      const rowAttempt = Number(r[9]) || 1;
+      let matchIdx = -1;
+      for (let j = 0; j < remainingLegacy.length; j += 1) {
+        const t = remainingLegacy[j];
+        if (
+          rowSubmittedAt === t.submittedAt &&
+          rowNumber === t.number &&
+          rowCode === t.studentCode &&
+          rowNormName === t.name &&
+          rowAttempt === t.attempt
+        ) {
+          matchIdx = j;
+          break;
+        }
+      }
+      if (matchIdx !== -1) {
+        remainingLegacy.splice(matchIdx, 1);
+        sheet.deleteRow(i + 2);
+        deleted += 1;
+      }
+    }
+  }
+  return deleted;
+}
+
+function countRemainingStudentSubmissions_(allSheet, classNo, targetCode, targetNormName, isExtra) {
+  if (!allSheet || allSheet.getLastRow() <= 1) return 0;
+  const lastRow = allSheet.getLastRow();
+  const values = allSheet.getRange(2, 1, lastRow - 1, 5).getValues();
+  let count = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    const r = values[i];
+    if (Number(r[1]) !== classNo) continue;
+    const rowCode = String(r[3] || '').trim();
+    const rowNormName = normalizeName_(r[4]);
+    if (!rowCode && !rowNormName) continue;
+    if (isExtra) {
+      if (rowCode === targetCode && rowNormName === targetNormName) {
+        count += 1;
+      }
+    } else if ((rowCode === targetCode && rowNormName === targetNormName) || (targetNormName && rowNormName === targetNormName)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function deleteSelectionExact_(selSheet, classNo, targetCode, targetNormName) {
+  if (!selSheet || selSheet.getLastRow() <= 1) return 0;
+  const lastRow = selSheet.getLastRow();
+  const values = selSheet.getRange(2, 1, lastRow - 1, 3).getValues();
   let deleted = 0;
   for (let i = values.length - 1; i >= 0; i -= 1) {
     const r = values[i];
-    if (Number(r[colClass]) !== classNo) continue;
-    const rowCode = String(r[colCode] || '').trim();
-    const rowName = normalizeName_(r[colName] || '');
-    const codeMatch = Boolean(studentCode) && rowCode === studentCode;
-    const nameMatch = Boolean(normName) && rowName === normName;
-    if (codeMatch || nameMatch) {
-      sheet.deleteRow(i + 2);
+    if (
+      Number(r[0]) === classNo &&
+      String(r[1] || '').trim() === targetCode &&
+      normalizeName_(r[2]) === targetNormName
+    ) {
+      selSheet.deleteRow(i + 2);
       deleted += 1;
     }
   }
@@ -381,17 +510,39 @@ function ensureSheetWithHeader_(book, name, headers, widths) {
         sheet.setColumnWidth(idx + 1, w);
       });
     }
+  } else {
+    if (typeof sheet.getMaxColumns === 'function' && sheet.getMaxColumns() < headers.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+    }
+    const existingHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    for (let idx = 0; idx < headers.length; idx += 1) {
+      if (String(existingHeaders[idx] || '').trim() === '') {
+        sheet.getRange(1, idx + 1, 1, 1)
+          .setValues([[headers[idx]]])
+          .setBackground('#64261E')
+          .setFontColor('#ffffff')
+          .setFontWeight('bold');
+        if (widths && widths[idx]) {
+          sheet.setColumnWidth(idx + 1, widths[idx]);
+        }
+      }
+    }
   }
   return sheet;
 }
 
-function countPreviousAttempts_(sheet, studentCode, worksheet) {
+function countPreviousAttempts_(sheet, studentCode, name, worksheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return 0;
   const values = sheet.getRange(2, 4, lastRow - 1, 3).getValues();
+  const targetNorm = normalizeName_(name);
   let count = 0;
   for (let i = 0; i < values.length; i += 1) {
-    if (String(values[i][0]) === String(studentCode) && String(values[i][2]) === String(worksheet)) {
+    if (
+      String(values[i][0] || '').trim() === String(studentCode).trim() &&
+      normalizeName_(values[i][1]) === targetNorm &&
+      String(values[i][2] || '').trim() === String(worksheet).trim()
+    ) {
       count += 1;
     }
   }
@@ -401,7 +552,8 @@ function countPreviousAttempts_(sheet, studentCode, worksheet) {
 function readSubmissions_(book) {
   const sheet = book.getSheetByName(SHEET_ALL);
   if (!sheet || sheet.getLastRow() <= 1) return [];
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, HEADERS_SUBMISSION.length).getValues();
+  const numCols = getReadableSubmissionColCount_(sheet);
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, numCols).getValues();
   return rows
     .filter(function (r) { return String(r[3] || '').trim() !== ''; })
     .map(function (r) {
@@ -422,9 +574,154 @@ function readSubmissions_(book) {
         reflectionReason: String(r[13] || ''),
         reflection20: String(r[14] || ''),
         reflectionLength: Number(r[15]) || 0,
-        answersJson: String(r[16] || '{}')
+        answersJson: String(r[16] || '{}'),
+        submissionId: numCols >= 18 ? String(r[17] || '').trim() : ''
       };
     });
+}
+
+function buildMigrationSignature_(r) {
+  return [
+    formatCellDate_(r[0]),
+    Number(r[1]) || 0,
+    Number(r[2]) || 0,
+    String(r[3] || '').trim(),
+    normalizeName_(r[4]),
+    String(r[5] || '').trim(),
+    Number(r[6]) || 0,
+    Number(r[8]) || 0,
+    Number(r[9]) || 1,
+    String(r[14] || '').trim(),
+    String(r[16] || '').trim()
+  ].join('||');
+}
+
+/**
+ * 기존 제출 행(전체제출 + 1~7반)에 18번째 열 '제출ID'를 추가하고 1:1 일치 건에 동일 UUID를 부여합니다.
+ * 두 시트에서 일치 건을 특정하기 어려운(중복/불일치) 행은 임의로 연결하지 않고 로그로 보고합니다.
+ */
+function migrateSubmissionIds() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    throw new Error('다른 작업이 진행 중입니다. 잠시 후 다시 실행해 주세요.');
+  }
+  try {
+    const book = getSpreadsheet_();
+    const allSheet = ensureSheetWithHeader_(book, SHEET_ALL, HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
+    const classSheets = {};
+    CLASS_LIST.forEach(function (c) {
+      classSheets[c] = ensureSheetWithHeader_(book, c + '반', HEADERS_SUBMISSION, WIDTHS_SUBMISSION);
+    });
+
+    let alreadyHasIdCount = 0;
+    const allByClassAndSig = {};
+    if (allSheet.getLastRow() > 1) {
+      const allRows = allSheet.getRange(2, 1, allSheet.getLastRow() - 1, HEADERS_SUBMISSION.length).getValues();
+      allRows.forEach(function (r, idx) {
+        if (String(r[3] || '').trim() === '' && String(r[4] || '').trim() === '') return;
+        const existingId = String(r[17] || '').trim();
+        if (existingId) {
+          alreadyHasIdCount += 1;
+          return;
+        }
+        const c = Number(r[1]) || 0;
+        const sig = buildMigrationSignature_(r);
+        if (!allByClassAndSig[c]) allByClassAndSig[c] = {};
+        if (!allByClassAndSig[c][sig]) allByClassAndSig[c][sig] = [];
+        allByClassAndSig[c][sig].push({ rowNum: idx + 2, row: r });
+      });
+    }
+
+    let linkedCount = 0;
+    const needsReview = [];
+
+    CLASS_LIST.forEach(function (c) {
+      const cSheet = classSheets[c];
+      const classBySig = {};
+      if (cSheet.getLastRow() > 1) {
+        const cRows = cSheet.getRange(2, 1, cSheet.getLastRow() - 1, HEADERS_SUBMISSION.length).getValues();
+        cRows.forEach(function (r, idx) {
+          if (String(r[3] || '').trim() === '' && String(r[4] || '').trim() === '') return;
+          if (String(r[17] || '').trim()) return;
+          const sig = buildMigrationSignature_(r);
+          if (!classBySig[sig]) classBySig[sig] = [];
+          classBySig[sig].push({ rowNum: idx + 2, row: r });
+        });
+      }
+
+      const allForClass = allByClassAndSig[c] || {};
+      const sigSeen = {};
+      const allSigs = [];
+      Object.keys(allForClass).forEach(function (s) {
+        if (!sigSeen[s]) { sigSeen[s] = true; allSigs.push(s); }
+      });
+      Object.keys(classBySig).forEach(function (s) {
+        if (!sigSeen[s]) { sigSeen[s] = true; allSigs.push(s); }
+      });
+
+      allSigs.forEach(function (sig) {
+        const allMatches = allForClass[sig] || [];
+        const classMatches = classBySig[sig] || [];
+        if (allMatches.length === 1 && classMatches.length === 1) {
+          const newId = Utilities.getUuid();
+          allSheet.getRange(allMatches[0].rowNum, 18, 1, 1).setValues([[newId]]);
+          cSheet.getRange(classMatches[0].rowNum, 18, 1, 1).setValues([[newId]]);
+          linkedCount += 1;
+        } else {
+          const sample = (allMatches[0] || classMatches[0]).row;
+          let reason = 'AMBIGUOUS';
+          if (allMatches.length === 0) reason = 'UNMATCHED_IN_ALL';
+          else if (classMatches.length === 0) reason = 'UNMATCHED_IN_CLASS';
+          needsReview.push({
+            reason: reason,
+            classNo: c,
+            allRows: allMatches.map(function (m) { return m.rowNum; }),
+            classRows: classMatches.map(function (m) { return m.rowNum; }),
+            submittedAt: formatCellDate_(sample[0]),
+            studentCode: String(sample[3] || '').trim(),
+            name: String(sample[4] || '').trim()
+          });
+        }
+      });
+    });
+
+    Object.keys(allByClassAndSig).forEach(function (cKey) {
+      const cNum = Number(cKey);
+      if (CLASS_LIST.indexOf(cNum) !== -1) return;
+      const map = allByClassAndSig[cKey];
+      Object.keys(map).forEach(function (sig) {
+        const matches = map[sig];
+        const sample = matches[0].row;
+        needsReview.push({
+          reason: 'UNMATCHED_IN_CLASS',
+          classNo: cNum,
+          allRows: matches.map(function (m) { return m.rowNum; }),
+          classRows: [],
+          submittedAt: formatCellDate_(sample[0]),
+          studentCode: String(sample[3] || '').trim(),
+          name: String(sample[4] || '').trim()
+        });
+      });
+    });
+
+    SpreadsheetApp.flush();
+    console.log(
+      '제출ID 마이그레이션 완료: 1:1 연결 ' + linkedCount + '건, 기존 ID 보유(전체제출) ' +
+      alreadyHasIdCount + '건, 교사 확인 필요 ' + needsReview.length + '건'
+    );
+    if (needsReview.length > 0) {
+      console.log('교사 확인 필요 목록: ' + JSON.stringify(needsReview));
+    }
+
+    return {
+      ok: true,
+      linkedCount: linkedCount,
+      alreadyHasIdCount: alreadyHasIdCount,
+      needsReview: needsReview
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function readSelections_(book) {
